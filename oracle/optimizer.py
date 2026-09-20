@@ -1,0 +1,190 @@
+"""
+oracle/optimizer.py
+Ottimizzatore vincolato offline per la determinazione della mesh ottimale X* e del target Delta X*.
+
+Risolve il problema variazionale continuo:
+    X* = argmin_X J(X; u_ref)
+soggetto a:
+    - J_e(X) >= epsilon   forall e in {1, ..., M}
+    - X_i = X_i^{boundary} forall i in d_Omega
+
+Funge da generatore del target di apprendimento Delta X* = X* - X_current
+per la supervisione offline della GNN.
+"""
+
+from typing import Dict, Any, Tuple, Optional, List
+import numpy as np
+from scipy.optimize import minimize, OptimizeResult
+
+from geometry.geometry import compute_mesh_metrics
+from geometry.safety import apply_safety_filter
+from oracle.field import GaussianBumpField
+from oracle.objective import OracleObjective
+
+
+class OfflineMeshOptimizer:
+    """
+    Risolutore numerico offline per l'adattività variazionale r-adaptive della mesh.
+    """
+
+    def __init__(
+        self,
+        reference_field: GaussianBumpField,
+        initial_nodes: np.ndarray,
+        cells: np.ndarray,
+        boundary_nodes: np.ndarray,
+        lambda_D: float = 0.01,
+        lambda_Q: float = 0.001,
+        epsilon: float = 1e-4,
+        max_iter: int = 250,
+        ftol: float = 1e-7,
+        gtol: float = 1e-5
+    ):
+        """
+        Input:
+            reference_field: istanza del campo analitico continuo u_ref
+            initial_nodes  : coordinate nodali iniziali X_0, shape [N, 2], float64
+            cells          : connettività topologica dei triangoli, shape [M, 3], int64
+            boundary_nodes : indici dei vertici vincolati sul bordo d_Omega, shape [N_bnd]
+            lambda_D       : peso del termine di penalizzazione dello spostamento
+            lambda_Q       : peso del termine di regolarizzazione geometrica
+            epsilon        : soglia minima ammissibile per il determinante dello Jacobiano
+            max_iter       : numero massimo di iterazioni per l'ottimizzatore numerico
+            ftol           : tolleranza relativa di arresto sul valore del funzionale
+            gtol           : tolleranza sulla norma del gradiente proiettato
+        """
+        self.initial_nodes = np.ascontiguousarray(initial_nodes, dtype=np.float64)
+        self.cells = np.ascontiguousarray(cells, dtype=np.int64)
+        self.boundary_nodes = np.ascontiguousarray(boundary_nodes, dtype=np.int64)
+
+        self.num_nodes: int = self.initial_nodes.shape[0]
+        self.num_cells: int = self.cells.shape[0]
+        self.epsilon = float(epsilon)
+        self.max_iter = int(max_iter)
+        self.ftol = float(ftol)
+        self.gtol = float(gtol)
+
+        # Costruzione maschera booleana dei nodi interni liberi di muoversi
+        self.is_boundary = np.zeros(self.num_nodes, dtype=bool)
+        self.is_boundary[self.boundary_nodes] = True
+        self.free_nodes_idx = np.where(~self.is_boundary)[0]
+        self.num_free_nodes: int = len(self.free_nodes_idx)
+
+        # Inizializzazione del funzionale obiettivo multiobiettivo
+        self.objective = OracleObjective(
+            reference_field=reference_field,
+            initial_nodes=self.initial_nodes,
+            cells=self.cells,
+            boundary_nodes=self.boundary_nodes,
+            lambda_D=lambda_D,
+            lambda_Q=lambda_Q,
+            epsilon=self.epsilon
+        )
+
+        # Monitoraggio cronologico dell'ottimizzazione
+        self.history: List[float] = []
+
+    def _reconstruct_full_nodes(self, x_free_flat: np.ndarray) -> np.ndarray:
+        """
+        Ricostruisce la matrice completa [N, 2] inserendo le coordinate interne
+        e ripristinando rigorosamente le posizioni fisse di Dirichlet sul contorno.
+        """
+        x_full = self.initial_nodes.copy()
+        x_full[self.free_nodes_idx] = x_free_flat.reshape((self.num_free_nodes, 2))
+        return x_full
+
+    def _objective_wrapper(self, x_free_flat: np.ndarray) -> float:
+        """
+        Funzione ponte scalare valutata unicamente sui gradi di libertà interni.
+        """
+        x_full = self._reconstruct_full_nodes(x_free_flat)
+        res = self.objective.evaluate(x_full)
+        val = res["total_objective"]
+        return val
+
+    def _callback(self, x_free_flat: np.ndarray) -> None:
+        """Callback di monitoraggio invocato ad ogni iterazione dell'algoritmo."""
+        val = self._objective_wrapper(x_free_flat)
+        self.history.append(val)
+
+    def optimize(self) -> Dict[str, Any]:
+        """
+        Esegue la procedura di minimizzazione offline.
+
+        Returns:
+            Dizionario contenente:
+                - 'optimal_nodes'      : coordinate finali X*, shape [N, 2]
+                - 'target_displacement': spostamento supervisionato Delta X* = X* - X_0, shape [N, 2]
+                - 'objective_history'  : lista dei valori del funzionale ad ogni iterazione
+                - 'final_objective'    : scalare J(X*)
+                - 'converged'          : flag booleano di convergenza dell'ottimizzatore
+                - 'iterations'         : numero di iterazioni eseguite
+                - 'final_metrics'      : metriche geometriche e funzionali dettagliate
+        """
+        self.history.clear()
+
+        # Condizione iniziale: coordinate dei soli nodi interni al tempo corrente
+        x0_free = self.initial_nodes[self.free_nodes_idx].flatten()
+        self.history.append(self._objective_wrapper(x0_free))
+
+        # Definizione dei bounds geometrici [0, 1] per evitare fughe al di fuori del dominio
+        bounds = []
+        for _ in range(self.num_free_nodes):
+            bounds.append((0.0, 1.0))  # coordinata x
+            bounds.append((0.0, 1.0))  # coordinata y
+
+        # Risoluzione del problema vincolato non-lineare via L-BFGS-B
+        opt_res: OptimizeResult = minimize(
+            fun=self._objective_wrapper,
+            x0=x0_free,
+            method="L-BFGS-B",
+            bounds=bounds,
+            callback=self._callback,
+            options={
+                "maxiter": self.max_iter,
+                "ftol": self.ftol,
+                "gtol": self.gtol,
+                "disp": False
+            }
+        )
+
+        # Ricostruzione delle coordinate ottimali
+        candidate_nodes = self._reconstruct_full_nodes(opt_res.x)
+        raw_displacement = candidate_nodes - self.initial_nodes
+
+        # Controllo di sicurezza e validazione geometrica post-ottimizzazione
+        # Se l'ottimizzatore si è arrestato in prossimità della soglia epsilon o l'ha violata per tolleranze numeriche,
+        # applichiamo il filtro deterministico per garantire ammissibilità formale.
+        alpha, safe_nodes, is_safe, min_j = apply_safety_filter(
+            nodes=self.initial_nodes,
+            displacement=raw_displacement,
+            cells=self.cells,
+            epsilon=self.epsilon
+        )
+
+        optimal_nodes = safe_nodes
+        target_displacement = optimal_nodes - self.initial_nodes
+
+        # Valutazione finale rigorosa delle metriche sul target ottenuto
+        final_metrics = self.objective.evaluate(optimal_nodes)
+        geom_summary = compute_mesh_metrics(optimal_nodes, self.cells)
+
+        final_metrics.update({
+            "min_jacobian": float(np.min(geom_summary["jacobians"])),
+            "mean_jacobian": float(np.mean(geom_summary["jacobians"])),
+            "min_escobar_quality": float(np.min(geom_summary["escobar_quality"])),
+            "mean_escobar_quality": float(np.mean(geom_summary["escobar_quality"])),
+            "max_aspect_ratio": float(np.max(geom_summary["aspect_ratio"])),
+            "num_inverted_cells": int(np.sum(geom_summary["inverted"])),
+            "safety_alpha_applied": float(alpha)
+        })
+
+        return {
+            "optimal_nodes": optimal_nodes,
+            "target_displacement": target_displacement,
+            "objective_history": self.history,
+            "final_objective": float(final_metrics["total_objective"]),
+            "converged": bool(opt_res.success and final_metrics["is_valid"]),
+            "iterations": int(opt_res.nit),
+            "final_metrics": final_metrics
+        }
