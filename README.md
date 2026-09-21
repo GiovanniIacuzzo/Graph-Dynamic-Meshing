@@ -326,9 +326,3 @@ Se utilizzi questo framework o i modelli numerici di **Graph-Dynamic Meshing** p
   year    = {}
 }
 ```
-
----
-
-## 8. Licenza
-
-Distribuito sotto licenza **MIT**. Consultare il file `LICENSE` per ulteriori dettagli.
