@@ -79,7 +79,7 @@ dataset:
   format: "pickle"               # 'pickle' con campioni serializzati
   splits:
     num_train: 120
-    num_val: 30
+    num_validation: 30
     num_test_interp: 30
     num_test_extrap: 30          # Parametri fuori dal range di addestramento
   extrapolation_ranges:
@@ -111,11 +111,13 @@ training:
     T_max: 150
     eta_min: 1.0e-6
   loss_weights:
-    w_target: 1.0                # MSE su Delta X* (supervisione oracle)
-    w_smooth: 0.01               # Dirichlet energy / Laplacian smoothing su Delta X
-    w_barrier: 0.001             # Soft log-barrier loss durante il training: -ln(J_e / J_0)
+    w_target: 1.0                 # MSE su Delta X* (supervisione oracle)
+    w_smooth: 0.0                 # Dirichlet energy / Laplacian smoothing su Delta X
+    w_barrier: 0.0001             # Soft log-barrier loss durante il training: -ln(J_e / J_0)
   checkpoint_interval: 10
   early_stopping_patience: 25
+  barrier_warmup_epochs: 20
+  barrier_ramp_epochs: 20
 
 # -----------------------------------------------------------------------------
 # 7. Modulo Numerico PDE & Solutori Classici (Stage B - Benchmark MMS)

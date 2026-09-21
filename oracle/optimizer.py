@@ -109,31 +109,18 @@ class OfflineMeshOptimizer:
 
     def optimize(self) -> Dict[str, Any]:
         """
-        Esegue la procedura di minimizzazione offline.
-
-        Returns:
-            Dizionario contenente:
-                - 'optimal_nodes'      : coordinate finali X*, shape [N, 2]
-                - 'target_displacement': spostamento supervisionato Delta X* = X* - X_0, shape [N, 2]
-                - 'objective_history'  : lista dei valori del funzionale ad ogni iterazione
-                - 'final_objective'    : scalare J(X*)
-                - 'converged'          : flag booleano di convergenza dell'ottimizzatore
-                - 'iterations'         : numero di iterazioni eseguite
-                - 'final_metrics'      : metriche geometriche e funzionali dettagliate
+        Esegue la procedura di minimizzazione offline registrando metadati di convergenza e cronometraggio.
         """
+        import time
+        t_start = time.perf_counter()
         self.history.clear()
 
-        # Condizione iniziale: coordinate dei soli nodi interni al tempo corrente
         x0_free = self.initial_nodes[self.free_nodes_idx].flatten()
-        self.history.append(self._objective_wrapper(x0_free))
+        initial_obj = self._objective_wrapper(x0_free)
+        self.history.append(initial_obj)
 
-        # Definizione dei bounds geometrici [0, 1] per evitare fughe al di fuori del dominio
-        bounds = []
-        for _ in range(self.num_free_nodes):
-            bounds.append((0.0, 1.0))  # coordinata x
-            bounds.append((0.0, 1.0))  # coordinata y
+        bounds = [(0.0, 1.0)] * (2 * self.num_free_nodes)
 
-        # Risoluzione del problema vincolato non-lineare via L-BFGS-B
         opt_res: OptimizeResult = minimize(
             fun=self._objective_wrapper,
             x0=x0_free,
@@ -147,14 +134,12 @@ class OfflineMeshOptimizer:
                 "disp": False
             }
         )
+        oracle_elapsed = time.perf_counter() - t_start
 
-        # Ricostruzione delle coordinate ottimali
+        # Ricostruzione e safety filter
         candidate_nodes = self._reconstruct_full_nodes(opt_res.x)
         raw_displacement = candidate_nodes - self.initial_nodes
 
-        # Controllo di sicurezza e validazione geometrica post-ottimizzazione
-        # Se l'ottimizzatore si è arrestato in prossimità della soglia epsilon o l'ha violata per tolleranze numeriche,
-        # applichiamo il filtro deterministico per garantire ammissibilità formale.
         alpha, safe_nodes, is_safe, min_j = apply_safety_filter(
             nodes=self.initial_nodes,
             displacement=raw_displacement,
@@ -165,7 +150,6 @@ class OfflineMeshOptimizer:
         optimal_nodes = safe_nodes
         target_displacement = optimal_nodes - self.initial_nodes
 
-        # Valutazione finale rigorosa delle metriche sul target ottenuto
         final_metrics = self.objective.evaluate(optimal_nodes)
         geom_summary = compute_mesh_metrics(optimal_nodes, self.cells)
 
@@ -176,7 +160,15 @@ class OfflineMeshOptimizer:
             "mean_escobar_quality": float(np.mean(geom_summary["escobar_quality"])),
             "max_aspect_ratio": float(np.max(geom_summary["aspect_ratio"])),
             "num_inverted_cells": int(np.sum(geom_summary["inverted"])),
-            "safety_alpha_applied": float(alpha)
+            "safety_alpha_applied": float(alpha),
+            "oracle_time_seconds": float(oracle_elapsed),
+            "time_seconds": float(oracle_elapsed),
+            "nit": int(getattr(opt_res, "nit", 0)),
+            "nfev": int(getattr(opt_res, "nfev", 0)),
+            "njev": int(getattr(opt_res, "njev", 0)),
+            "success": bool(opt_res.success),
+            "status": int(opt_res.status),
+            "message": str(opt_res.message)
         })
 
         return {

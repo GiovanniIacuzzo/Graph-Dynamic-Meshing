@@ -23,7 +23,7 @@ import argparse
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import numpy as np
-import torch
+import time
 import matplotlib.pyplot as plt
 
 # Inclusione della cartella root nel path di sistema
@@ -119,7 +119,7 @@ class BenchmarkSuite:
         splits_to_test = ["test_interp", "test_extrap"]
         aggregated_results: Dict[str, Dict[str, List[float]]] = {}
 
-        baselines = ["B0_fixed", "B3_gnn_raw", "B4_gnn_safety", "B5_oracle"]
+        baselines = ["B0_fixed", "B_zero", "B3_gnn_raw", "B4_gnn_safety", "B5_oracle"]
         for s in splits_to_test:
             aggregated_results[s] = {
                 b: {
@@ -129,7 +129,8 @@ class BenchmarkSuite:
                     "inverted_cells": [],
                     "disp_l2_error": [],
                     "disp_rel_error": [],
-                    "timing_ms": []
+                    "timing_ms": [],
+                    "oracle_recovered_ratio": []
                 }
                 for b in baselines
             }
@@ -165,40 +166,84 @@ class BenchmarkSuite:
                 # Baseline B0: Fixed Mesh
                 # -------------------------------------------------------------
                 res_b0 = self._evaluate_configuration(mesh_0, field, nodes_0, mesh_0.boundary_nodes, "B0_fixed")
-                aggregated_results[split_name]["B0_fixed"]["interp_error"].append(res_b0["interpolation_error"])
+                e_fixed = res_b0["interpolation_error"]
+                aggregated_results[split_name]["B0_fixed"]["interp_error"].append(e_fixed)
                 aggregated_results[split_name]["B0_fixed"]["min_jacobian"].append(res_b0["min_jacobian"])
                 aggregated_results[split_name]["B0_fixed"]["mean_quality"].append(res_b0["mean_mesh_quality"])
                 aggregated_results[split_name]["B0_fixed"]["inverted_cells"].append(res_b0["inverted_cells"])
                 aggregated_results[split_name]["B0_fixed"]["timing_ms"].append(0.0)
 
                 # -------------------------------------------------------------
+                # Baseline B_zero: Zero Displacement Predictor (Delta X = 0)
+                # -------------------------------------------------------------
+                disp_zero = np.zeros_like(target_disp)
+                disp_m_zero = compute_displacement_metrics(disp_zero, target_disp)
+                aggregated_results[split_name]["B_zero"]["interp_error"].append(e_fixed)
+                aggregated_results[split_name]["B_zero"]["min_jacobian"].append(res_b0["min_jacobian"])
+                aggregated_results[split_name]["B_zero"]["mean_quality"].append(res_b0["mean_mesh_quality"])
+                aggregated_results[split_name]["B_zero"]["inverted_cells"].append(res_b0["inverted_cells"])
+                aggregated_results[split_name]["B_zero"]["disp_l2_error"].append(disp_m_zero["displacement_l2_error"])
+                aggregated_results[split_name]["B_zero"]["disp_rel_error"].append(disp_m_zero["displacement_relative_error"])
+                aggregated_results[split_name]["B_zero"]["timing_ms"].append(0.0)
+
+                # -------------------------------------------------------------
                 # Baseline B5: Oracle Reference
                 # -------------------------------------------------------------
                 mesh_oracle = mesh_0.update_coordinates(opt_nodes)
                 res_b5 = self._evaluate_configuration(mesh_oracle, field, nodes_0, mesh_0.boundary_nodes, "B5_oracle")
-                aggregated_results[split_name]["B5_oracle"]["interp_error"].append(res_b5["interpolation_error"])
+                e_oracle = res_b5["interpolation_error"]
+                
+                # Lettura del timing salvato nei metadati; se assente calcolo offline reale
+                oracle_t_raw = sample["metadata"]["oracle_metrics"].get("oracle_time_seconds", None)
+                if oracle_t_raw is None:
+                    oracle_t_raw = sample["metadata"]["oracle_metrics"].get("time_seconds", None)
+                
+                if oracle_t_raw is None:
+                    # Stima diretta del tempo reale su un campione per split se non registrato in precedenza
+                    if total_tested == 0:
+                        from oracle.optimizer import OfflineMeshOptimizer
+                        opt_probe = OfflineMeshOptimizer(
+                            reference_field=field,
+                            initial_nodes=nodes_0,
+                            cells=cells,
+                            boundary_nodes=mesh_0.boundary_nodes,
+                            lambda_D=self.oracle_cfg["objective"]["lambda_D"],
+                            lambda_Q=self.oracle_cfg["objective"]["lambda_Q"],
+                            epsilon=self.epsilon,
+                            max_iter=3
+                        )
+                        with Timer() as t_or_probe:
+                            opt_probe.optimize()
+                        oracle_t_ms = t_or_probe.elapsed_seconds * 1000.0
+                        self._cached_oracle_time = oracle_t_ms
+                    else:
+                        oracle_t_ms = getattr(self, "_cached_oracle_time", 7500.0)
+                else:
+                    oracle_t_ms = float(oracle_t_raw) * 1000.0
+
+                aggregated_results[split_name]["B5_oracle"]["interp_error"].append(e_oracle)
                 aggregated_results[split_name]["B5_oracle"]["min_jacobian"].append(res_b5["min_jacobian"])
                 aggregated_results[split_name]["B5_oracle"]["mean_quality"].append(res_b5["mean_mesh_quality"])
                 aggregated_results[split_name]["B5_oracle"]["inverted_cells"].append(res_b5["inverted_cells"])
-                aggregated_results[split_name]["B5_oracle"]["timing_ms"].append(
-                    sample["metadata"]["oracle_metrics"].get("time_seconds", 0.1) * 1000.0
-                )
+                aggregated_results[split_name]["B5_oracle"]["timing_ms"].append(oracle_t_ms)
 
                 # -------------------------------------------------------------
-                # Predizione GNN (Base comune per B3 e B4)
+                # Predizione GNN (Misurazione Completa T_online)
                 # -------------------------------------------------------------
-                with Timer() as t_pred:
-                    pred_res = self.engine.predict(mesh_0, u_0, grad_u_0)
+                t_online_start = time.perf_counter()
+                pred_res = self.engine.predict(mesh_0, u_0, grad_u_0)
+                t_online_ms = (time.perf_counter() - t_online_start) * 1000.0
 
                 raw_pred_disp = pred_res["predicted_displacement"]
-                gnn_time_ms = pred_res["timing"]["gnn_time"] * 1000.0
-                safety_time_ms = pred_res["timing"]["safety_time"] * 1000.0
+                safe_nodes = pred_res["new_nodes"]
+                safe_disp = safe_nodes - nodes_0
 
-                # Metriche di apprendimento sul displacement rispetto all'oracle
-                disp_metrics = compute_displacement_metrics(raw_pred_disp, target_disp)
+                # Metriche distinte di displacement per raw e safe
+                disp_m_raw = compute_displacement_metrics(raw_pred_disp, target_disp)
+                disp_m_safe = compute_displacement_metrics(safe_disp, target_disp)
 
                 # -------------------------------------------------------------
-                # Baseline B3: GNN Raw (Senza Safety Filter)
+                # Baseline B3: GNN Raw
                 # -------------------------------------------------------------
                 nodes_b3 = nodes_0 + raw_pred_disp
                 mesh_b3 = mesh_0.update_coordinates(nodes_b3)
@@ -208,23 +253,28 @@ class BenchmarkSuite:
                 aggregated_results[split_name]["B3_gnn_raw"]["min_jacobian"].append(res_b3["min_jacobian"])
                 aggregated_results[split_name]["B3_gnn_raw"]["mean_quality"].append(res_b3["mean_mesh_quality"])
                 aggregated_results[split_name]["B3_gnn_raw"]["inverted_cells"].append(res_b3["inverted_cells"])
-                aggregated_results[split_name]["B3_gnn_raw"]["disp_l2_error"].append(disp_metrics["displacement_l2_error"])
-                aggregated_results[split_name]["B3_gnn_raw"]["disp_rel_error"].append(disp_metrics["displacement_relative_error"])
-                aggregated_results[split_name]["B3_gnn_raw"]["timing_ms"].append(gnn_time_ms)
+                aggregated_results[split_name]["B3_gnn_raw"]["disp_l2_error"].append(disp_m_raw["displacement_l2_error"])
+                aggregated_results[split_name]["B3_gnn_raw"]["disp_rel_error"].append(disp_m_raw["displacement_relative_error"])
+                aggregated_results[split_name]["B3_gnn_raw"]["timing_ms"].append(pred_res["timing"]["gnn_time"] * 1000.0)
 
                 # -------------------------------------------------------------
-                # Baseline B4: GNN + Geometric Safety Filter (Nostro Framework)
+                # Baseline B4: GNN + Safety Filter (Framework Proposto)
                 # -------------------------------------------------------------
                 mesh_b4 = pred_res["adapted_mesh"]
                 res_b4 = self._evaluate_configuration(mesh_b4, field, nodes_0, mesh_0.boundary_nodes, "B4_gnn_safety")
+                e_gnn = res_b4["interpolation_error"]
 
-                aggregated_results[split_name]["B4_gnn_safety"]["interp_error"].append(res_b4["interpolation_error"])
+                gap_den = max(e_fixed - e_oracle, 1e-12)
+                r_oracle = (e_fixed - e_gnn) / gap_den
+
+                aggregated_results[split_name]["B4_gnn_safety"]["interp_error"].append(e_gnn)
                 aggregated_results[split_name]["B4_gnn_safety"]["min_jacobian"].append(res_b4["min_jacobian"])
                 aggregated_results[split_name]["B4_gnn_safety"]["mean_quality"].append(res_b4["mean_mesh_quality"])
                 aggregated_results[split_name]["B4_gnn_safety"]["inverted_cells"].append(res_b4["inverted_cells"])
-                aggregated_results[split_name]["B4_gnn_safety"]["disp_l2_error"].append(disp_metrics["displacement_l2_error"])
-                aggregated_results[split_name]["B4_gnn_safety"]["disp_rel_error"].append(disp_metrics["displacement_relative_error"])
-                aggregated_results[split_name]["B4_gnn_safety"]["timing_ms"].append(gnn_time_ms + safety_time_ms)
+                aggregated_results[split_name]["B4_gnn_safety"]["disp_l2_error"].append(disp_m_safe["displacement_l2_error"])
+                aggregated_results[split_name]["B4_gnn_safety"]["disp_rel_error"].append(disp_m_safe["displacement_relative_error"])
+                aggregated_results[split_name]["B4_gnn_safety"]["timing_ms"].append(t_online_ms)
+                aggregated_results[split_name]["B4_gnn_safety"]["oracle_recovered_ratio"].append(r_oracle)
 
                 total_tested += 1
 
@@ -247,8 +297,8 @@ def generate_summary_tables(
     summary: Dict[str, Any] = {}
 
     table_header = (
-        f"{'Baseline':<18} | {'Interp Err (x1e-4)':<18} | {'Min Jacobian':<14} | "
-        f"{'Mean Quality':<12} | {'Inverted Cells':<14} | {'Time (ms)':<10}"
+        f"{'Baseline':<16} | {'Interp Err (x1e-4)':<18} | {'R_oracle (%)':<14} | "
+        f"{'Min Jacobian':<14} | {'Mean Quality':<12} | {'Time (ms)':<10}"
     )
     separator = "-" * len(table_header)
 
@@ -277,6 +327,7 @@ def generate_summary_tables(
             std_err = np.std(metrics["interp_error"]) * 1e4
             min_j = np.min(metrics["min_jacobian"])
             mean_q = np.mean(metrics["mean_quality"])
+            mean_t = np.nanmean(metrics["timing_ms"]) if len(metrics["timing_ms"]) > 0 else np.nan
             inv_c = int(np.sum(metrics["inverted_cells"]))
             mean_t = np.mean(metrics["timing_ms"])
 
@@ -289,9 +340,12 @@ def generate_summary_tables(
                 "mean_time_ms": float(mean_t)
             }
 
+            r_rec_list = metrics.get("oracle_recovered_ratio", [])
+            r_rec_str = f"{np.mean(r_rec_list)*100:.1f}%" if len(r_rec_list) > 0 else "-"
+
             row_str = (
-                f"{b_name:<18} | {mean_err:.2f} +/- {std_err:.2f}{'':<5} | {min_j:+.4e}{'':<2} | "
-                f"{mean_q:.4f}{'':<6} | {inv_c:<14} | {mean_t:.2f}"
+                f"{b_name:<16} | {mean_err:.2f} +/- {std_err:.2f}{'':<5} | {r_rec_str:<14} | "
+                f"{min_j:+.4e}{'':<2} | {mean_q:.4f}{'':<6} | {mean_t:.2f}"
             )
             logger.info(row_str)
 
@@ -335,7 +389,7 @@ def plot_benchmark_results(results: Dict[str, Any], output_path: Path):
         results["test_interp"]["B4_gnn_safety"]["interp_error"],
         results["test_interp"]["B5_oracle"]["interp_error"]
     ]
-    ax0.boxplot(data_interp, labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
+    ax0.boxplot(data_interp, tick_labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
     ax0.set_title("Errore di Interpolazione $L^2$ (Test Interp)")
     ax0.set_ylabel("Errore $E_{interp}$")
     ax0.grid(True, linestyle="--", alpha=0.6)
@@ -348,7 +402,7 @@ def plot_benchmark_results(results: Dict[str, Any], output_path: Path):
         results["test_extrap"]["B4_gnn_safety"]["min_jacobian"],
         results["test_extrap"]["B5_oracle"]["min_jacobian"]
     ]
-    ax1.boxplot(data_j, labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
+    ax1.boxplot(data_j, tick_labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
     ax1.axhline(1e-4, color="r", linestyle="--", label="Soglia $\\epsilon$")
     ax1.set_title("Minimo Jacobiano $\\min J_e$ (Test Extrap OOD)")
     ax1.set_ylabel("Determinante Jacobiano")
@@ -415,3 +469,38 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+"""
+[2026-09-20 15:02:16] [INFO] [BenchmarkSuite] Avvio test su split 'test_interp' (30 campioni)...
+[2026-09-20 15:02:17] [INFO] [BenchmarkSuite] Avvio test su split 'test_extrap' (30 campioni)...
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Campagna completata su 60 istanze complessive.
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] 
+================ TABELLA: SPLIT TEST_INTERP ================
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Baseline         | Interp Err (x1e-4) | R_oracle (%)   | Min Jacobian   | Mean Quality | Time (ms) 
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] ---------------------------------------------------------------------------------------------------
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B0_fixed         | 0.19 +/- 0.11      | -              | +9.7656e-04   | 0.8660       | 0.00
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B_zero           | 0.19 +/- 0.11      | -              | +9.7656e-04   | 0.8660       | 0.00
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B3_gnn_raw       | 0.18 +/- 0.11      | -              | +8.0437e-04   | 0.8660       | 20.95
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B4_gnn_safety    | 0.18 +/- 0.11      | 11.8%          | +8.0437e-04   | 0.8660       | 22.48
+/Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/evaluate.py:304: RuntimeWarning: Mean of empty slice
+  mean_t = np.nanmean(metrics["timing_ms"]) if len(metrics["timing_ms"]) > 0 else np.nan
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B5_oracle        | 0.08 +/- 0.04      | -              | +3.0731e-04   | 0.8629       | nan
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] 
+================ TABELLA: SPLIT TEST_EXTRAP ================
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Baseline         | Interp Err (x1e-4) | R_oracle (%)   | Min Jacobian   | Mean Quality | Time (ms) 
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] ---------------------------------------------------------------------------------------------------
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B0_fixed         | 0.43 +/- 0.43      | -              | +9.7656e-04   | 0.8660       | 0.00
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B_zero           | 0.43 +/- 0.43      | -              | +9.7656e-04   | 0.8660       | 0.00
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B3_gnn_raw       | 0.50 +/- 0.50      | -              | +8.0348e-04   | 0.8660       | 14.87
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B4_gnn_safety    | 0.50 +/- 0.50      | 10.9%          | +8.0348e-04   | 0.8660       | 16.38
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B5_oracle        | 0.11 +/- 0.09      | -              | +1.0020e-04   | 0.8638       | nan
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] 
+Tabella LaTeX registrata con successo in: /Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/results/stage_a/benchmark/table_benchmark.tex
+/Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/evaluate.py:366: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  ax0.boxplot(data_interp, labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
+/Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/evaluate.py:379: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  ax1.boxplot(data_j, labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Grafici di benchmark esportati con successo in: /Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/results/stage_a/benchmark/benchmark_plots.png
+[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] === Campagna di Valutazione Scientifica Completata con Successo ===
+"""

@@ -250,3 +250,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+[2026-09-20 15:02:06] [INFO] [Inference] === Avvio Inferenza Mesh Mover GNN ===
+[2026-09-20 15:02:08] [INFO] [Inference] --- Risultati dell'Inferenza ---
+[2026-09-20 15:02:08] [INFO] [Inference] Alpha globale di sicurezza: 1.000000 (Pienamente ammissibile: True)
+[2026-09-20 15:02:08] [INFO] [Inference] Minimo Jacobiano risultante: 8.4647e-04 (Soglia epsilon: 1.0000e-04)
+[2026-09-20 15:02:08] [INFO] [Inference] Qualità media Escobar-Knupp : 0.8660
+[2026-09-20 15:02:08] [INFO] [Inference] Aspect ratio massimo       : 1.47
+[2026-09-20 15:02:08] [INFO] [Inference] Elementi invertiti         : 0
+[2026-09-20 15:02:08] [INFO] [Inference] Tempi: GNN=962.91 ms | Safety=0.34 ms | Totale=963.25 ms
+"""
