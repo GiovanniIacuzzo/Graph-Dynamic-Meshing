@@ -51,16 +51,22 @@ Il framework opera su domini bidimensionali discretizzati tramite mesh triangola
 ### 2.1. Funzionale Variazionale dell'Oracolo (Target Offline)
 
 L'oracolo definisce la configurazione nodale ottima $X^*$ minimizzando l'errore funzionale integrato di interpolazione $L^2$ regolarizzato:
+
 $$X^* = \arg\min_{X} \left[ \tilde{E}_{\text{interp}}(X) + \lambda_D \tilde{D}(X) \right]$$
+
 soggetto ai vincoli di non compenetrazione $J_e(X) \ge \epsilon > 0 \; \forall e \in \mathcal{T}$ e condizioni al contorno di Dirichlet fisse $\left. X \right\vert{}_{\partial \Omega} = X_0\vert{}_{\partial \Omega}$.
 
 ### 2.2. Filtro Geometrico di Sicurezza Analitico $\mathcal{O}(M)$
 
 Dato uno spostamento nodale candidato $\Delta X$, il determinante Jacobiano dell'elemento triangolare $e$ lungo il raggio di proiezione scalato $\alpha \in [0, 1]$ è espresso analiticamente come un polinomio quadratico:
+
 $$J_e(\alpha) = A_e \alpha^2 + B_e \alpha + C_e$$
+
 dove i coefficienti dipendono esclusivamente dalle coordinate di base $X_0$ e dal displacement predetto $\Delta X$.
 Il filtro determina la minima radice ammissibile positiva $\alpha_e^*$ per cui $J_e(\alpha) = \epsilon$. Il fattore globale di ritrazione risulta:
+
 $$\alpha_{\text{global}} = \min \left(1.0, \, \min_{e \in \mathcal{T}} \alpha_e^* \right) \cdot (1 - \delta_{\text{margin}})$$
+
 Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preservi l'orientamento di ogni cella in un singolo passaggio vettorializzato senza iterazioni.
 
 ---
