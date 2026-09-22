@@ -91,7 +91,10 @@ Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preser
 │   └── 🐍 metrics.py
 │
 ├── 📁 experiments
-│   └── 🐍 stage_a_campaign.py
+│   ├── 🐍 stage_a_campaign.py
+│   ├── 🐍 stage_b_campaign.py
+│   ├── 🐍 stage_b_diagnostics.py
+│   └── 🐍 stage_b_final_ablations.py
 │
 ├── 📁 geometry
 │   ├── 🐍 __init__.py
@@ -106,9 +109,11 @@ Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preser
 ├── 📁 numerics
 │   ├── 🐍 __init__.py
 │   ├── 🐍 ale.py
+│   ├── 🐍 dynamic_solver.py
 │   ├── 🐍 fem.py
 │   ├── 🐍 pde.py
-│   └── 🐍 remap.py
+│   ├── 🐍 remap.py
+│   └── 🐍 remap_l2.py
 │
 ├── 📁 oracle
 │   ├── 🐍 __init__.py
@@ -121,8 +126,15 @@ Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preser
 ├── 📁 tests
 │   ├── 🐍 __init__.py
 │   ├── 🐍 test_dataset.py
+│   ├── 🐍 test_dynamic_one_step.py
+│   ├── 🐍 test_fem_convergence.py
+│   ├── 🐍 test_fem_mms.py
 │   ├── 🐍 test_geometry.py
 │   ├── 🐍 test_oracle.py
+│   ├── 🐍 test_pde_mms.py
+│   ├── 🐍 test_remap.py
+│   ├── 🐍 test_remap_diagnostics.py
+│   ├── 🐍 test_remap_l2.py
 │   ├── 🐍 test_safety.py
 │   └── 🐍 test_safety_stress.py
 │
@@ -131,6 +143,7 @@ Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preser
 │   └── 🐍 utils.py
 │
 ├── ⚙️ .gitignore
+├── 📄 LICENSE
 ├── 📝 README.md
 ├── ⚙️ environment.yml
 │
