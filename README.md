@@ -297,6 +297,8 @@ Per dimostrare l'applicabilità in tempo reale su architetture standard e dispos
 * L'oracolo L-BFGS-B scala in modo super-lineare a causa della costruzione numerica del gradiente tramite differenze finite e delle ripetute valutazioni degli integrali di quadratura a ogni iterazione di linea.
 * **GDM mostra una complessità empirica quasi-lineare $\mathcal{O}(N)$**, determinata dai passaggi di *message passing* sparsi della GNN e dal calcolo elementare vettorializzato del Safety Filter, il quale mantiene un overhead inferiore a **$1\text{ ms}$** anche su maglie da oltre $8000$ triangoli.
 
+---
+
 ## 7. Risultati Sperimentali e Validazione Dinamica (Stage B)
 
 La fase di **Stage B** ha esteso il framework GDM dall'adattività statica all'**accoppiamento dinamico transiente con solutori differenziali alle derivate parziali (PDE)**. L'obiettivo primario consiste nel verificare se la mesh deformata in tempo reale dalla GNN mantenga stabilità geometrica, accuratezza formale e consistenza fisica lungo una traiettoria temporale finita senza degradare la discretizzazione numerica.
