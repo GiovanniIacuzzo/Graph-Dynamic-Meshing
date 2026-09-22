@@ -1,0 +1,21 @@
+\subsection{Static Geometric Validation (Stage A)}
+\label{subsec:stage_a_results}
+% Benchmark statico su Gaussian Bump: confronto B0 (Fixed), B_zero, B3 (Raw GNN), B4 (GDM con Safety), B5 (Oracle).
+% Verifica della quota di Oracle gap recuperata.
+% Stress test di non-inversione del Safety Filter al variare del moltiplicatore deformativo k.
+% Profilazione computazionale CPU vs CPU e complessità scalare quasi-lineare O(N).
+
+\subsection{Dynamic Discoupling Diagnostics (Stage B)}
+\label{subsec:stage_b_diagnostics}
+% Suite diagnostica D1-D5: discolpa del solutore FEM e isolamento dell'errore di trasferimento.
+% Suite diagnostica operatori R1-R5 e L1-L6: confronto quantitativo tra remapping P1 e L2-projection.
+% Studio ablativo: robustezza del gradiente FEM vs gradiente analitico esatto.
+% Sensibilità alla frequenza di adattamento (sweep su adapt_interval).
+
+\subsection{ALE and D-GCL Verification (Stage C)}
+\label{subsec:stage_c_verification}
+% Test C1: verifica cinematica della velocità discreta di griglia.
+% Test C2: rispetto rigoroso della D-GCL algebrica ed elementare su 100 time-step (residuo algebrico e free-stream preservation a precisione macchina).
+% Test C3: consistenza a singolo passo MMS.
+% Test C4: verifica ordini spaziali asintotici di convergenza su mesh deformata (O(h^2) e O(h)).
+% Test C5: convergenza temporale Cauchy self-convergence BDF1 (O(dt)).

@@ -1,0 +1,26 @@
+\subsection{Experimental Setup and Baseline Definitions}
+\label{subsec:benchmark_setup}
+% Parametri simulazione PDE: T, dt, Griglia 32x32 (1089 nodi, 2048 celle), intervallo di adattamento N_a = 10.
+% Definizione delle configurazioni a confronto:
+% C0: Fixed Eulerian FEM
+% C1: GDM w/ L2-Projection Remap (Stage B)
+% C2: GDM w/ Continuous ALE D-GCL (Proposed Method)
+% C3: Instantaneous Interpolation Oracle w/ ALE
+
+\subsection{Accuracy and Error Evolution Dynamics}
+\label{subsec:error_dynamics}
+% Evoluzione temporale dell'errore continuo relativo L2(t) ed errore integrato nel tempo.
+% Analisi del comportamento dell'Oracolo istantaneo rispetto alla PDE differenziale.
+% Confronto tra adattamento a gradino con remap L2 vs moto continuo progressivo ALE.
+
+\subsection{Computational Runtime Decomposition and Speedup}
+\label{subsec:runtime_analysis}
+% Scomposizione analitica dei tempi: FEM solve, calcolo GNN/Oracle, Safety Filter, Remapping.
+% Dimostrazione dell'annullamento dell'overhead di remapping in formulazione ALE.
+% Speedup conseguito da GDM rispetto alle configurazioni di riferimento.
+
+\subsection{Geometric Robustness and Mesh Quality}
+\label{subsec:geometric_robustness}
+% Evoluzione temporale del determinante Jacobiano minimo min_{t,e} J_e.
+% Tracciamento del fattore alpha_global e conteggio elementi invertiti lungo la simulazione.
+% Rappresentazioni qualitative della deformazione della mesh che insegue il fronte mobile.

@@ -64,3 +64,4 @@ ENV/
 # File temporanei generati da Conda durante l'installazione
 # =============================================================================
 condaenv.*.requirements.txt
+compiler/

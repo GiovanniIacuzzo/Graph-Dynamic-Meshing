@@ -1,0 +1,153 @@
+\documentclass[10pt,a4paper,twocolumn]{article}
+
+% --- Geometria della Pagina e Layout ---
+\usepackage[top=2.0cm,bottom=2.0cm,left=1.8cm,right=1.8cm,columnsep=0.65cm]{geometry}
+
+% --- Codifica, Font e Microtipografia ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\usepackage{microtype}
+
+% --- Pacchetti Matematici Avanzati ---
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{mathtools}
+\usepackage{bm}
+
+% --- Tabelle e Figure ---
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{float}
+
+% --- Algoritmi ---
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+% --- Collegamenti Ipertestuali e Riferimenti ---
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,
+            linkcolor=blue!70!black,
+            citecolor=blue!70!black,
+            urlcolor=blue!70!black,
+            pdfencoding=auto,
+            psdextra]{hyperref}
+
+% --- Ambienti Matematici Teorema / Definizione ---
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+% --- Titolo e Autori ---
+\title{\textbf{\Large Graph Dynamic Meshing (GDM): A Conservative and Safety-Guaranteed Neural Adaptive Mesh Framework for Transient Convection-Diffusion PDEs}}
+
+\author{
+  \textbf{Giovanni Giuseppe Iacuzzo}\textsuperscript{1,*} \\
+  \small \textsuperscript{1}Department of Engineering and Architecture, University of Enna "Kore", Enna, Italy \\
+  \small \textsuperscript{*}Corresponding author: \texttt{giovanni.iacuzzo@unikore.it}
+}
+
+\date{\today}
+
+% -------------------------------------------------------------
+% INIZIO DOCUMENTO
+% -------------------------------------------------------------
+\begin{document}
+
+\maketitle
+
+% --- Abstract ---
+\begin{abstract}
+\noindent
+% Sintesi sintetica: contesto del problema (mesh r-adaptation e FEM transiente),
+% limiti dei metodi correnti (costo dell'ottimizzazione variazionale runtime,
+% degradazione da remapping pointwise, instabilità geometrica / inversioni di celle),
+% framework proposto (GDM: GNN + filtro analitico di non-inversione + formulazione ALE D-GCL conforme),
+% principali risultati quantitativi (speedup rispetto a ottimizzatori classici, conservazione massa/GCL, accuratezza PDE).
+\textit{Abstract placeholder: contesto, problema aperto, metodologia proposta (GDM), proprietà teoriche (D-GCL, invariabilità topologica, safety filter), risultati chiave e speedup computazionale.}
+\end{abstract}
+
+\vspace{0.5em}
+\noindent\textbf{Keywords:} Adaptive Mesh Refinement, $r$-adaptation, Graph Neural Networks, Arbitrary Lagrangian-Eulerian (ALE), Geometric Conservation Law, Finite Element Method.
+\newpage
+
+% =============================================================
+% 1. INTRODUZIONE
+% =============================================================
+\section{Introduction}
+\label{sec:introduction}
+\input{sections/01_introduction.tex}
+\newpage
+
+% =============================================================
+% 2. MODELLO MATEMATICO E METODI NUMERICI
+% =============================================================
+\section{Mathematical Formulation and Numerical Discretization}
+\label{sec:formulation}
+\input{sections/02_formulation.tex}
+\newpage
+
+% =============================================================
+% 3. FRAMEWORK GRAPH DYNAMIC MESHING (GDM)
+% =============================================================
+\section{The Graph Dynamic Meshing Framework}
+\label{sec:gdm_framework}
+\input{sections/03_gdm_framework.tex}
+\newpage
+
+% =============================================================
+% 4. DALLO STATE TRANSFER AD ALE E D-GCL
+% =============================================================
+\section{From State Transfer Operators to ALE Formulation}
+\label{sec:ale_dgcl}
+\input{sections/04_ale_dgcl.tex}
+\newpage
+
+% =============================================================
+% 5. VALIDAZIONE METODOLOGICA E NUMERICA
+% =============================================================
+\section{Numerical Verification and Component Diagnostics}
+\label{sec:diagnostics}
+\input{sections/05_diagnostics.tex}
+\newpage
+
+% =============================================================
+% 6. RISULTATI DINAMICI E BENCHMARK COMPARATIVO
+% =============================================================
+\section{Transient Dynamic Benchmark and Comparative Analysis}
+\label{sec:dynamic_benchmark}
+\input{sections/06_dynamic_benchmark.tex}
+\newpage
+
+% =============================================================
+% 7. DISCUSSIONE E LIMITAZIONI
+% =============================================================
+\section{Discussion}
+\label{sec:discussion}
+\input{sections/07_discussion.tex}
+\newpage
+
+% =============================================================
+% 8. CONCLUSIONI E SVILUPPI FUTURI
+% =============================================================
+\section{Conclusions and Future Work}
+\label{sec:conclusions}
+\input{sections/08_conclusions.tex}
+\newpage
+
+% =============================================================
+% RINGRAZIAMENTI
+% =============================================================
+\section*{Acknowledgments}
+% Ringraziamenti istituzionali, progetti di ricerca, supporto finanziario o risorse di calcolo.
+
+% =============================================================
+% BIBLIOGRAFIA
+% =============================================================
+\bibliographystyle{unsrtnat}
+% \bibliography{references} % Decommentare quando sarà presente il file references.bib
+
+\end{document}

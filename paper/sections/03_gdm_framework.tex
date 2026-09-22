@@ -1,0 +1,20 @@
+\section{\texorpdfstring{The Graph Dynamic Meshing (GDM) Framework}{The Graph Dynamic Meshing (GDM) Framework}}
+\label{subsec:graph_representation}
+% Mappatura della mesh triangolare come grafo bidirezionale G = (V, E).
+% Feature nodali: coordinate correnti X_i, campo scalare u_i, gradiente calcolato (FEM o analitico).
+% Feature degli archi: vettori di distanza relativa, lunghezze iniziali/correnti.
+
+\subsection{MeshMover GNN Architecture}
+\label{subsec:gnn_arch}
+% Schema Encode-Process-Decode.
+% Blocchi di Message Passing con LayerNorm e attivazioni SiLU.
+% Imposizione delle condizioni al bordo (mascheramento nodi di Dirichlet sul perimetro).
+% Funzione di loss supervisionata con regolarizzazione geometrica.
+
+\subsection{Analytical Deterministic Safety Filter}
+\label{subsec:safety_filter}
+% Definizione del determinante Jacobiano orientato dell'elemento J_e = 2 * Area(e).
+% Condizione di ammissibilità: J_e >= epsilon > 0 per ogni cella e.
+% Traiettoria lineare convessa nodale X(alpha) = X_old + alpha * Delta X.
+% Derivazione analitica delle radici polinomiali del secondo ordine per ogni triangolo.
+% Calcolo esatto O(M) del fattore globale di contrazione ammissibile alpha_global in (0, 1].

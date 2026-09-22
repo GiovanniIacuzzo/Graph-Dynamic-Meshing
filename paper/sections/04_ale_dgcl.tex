@@ -1,0 +1,24 @@
+\subsection{The Numerical Dissipation Bottleneck in Pointwise Remapping}
+\label{subsec:remap_dissipation}
+% Formulazione del remapping pointwise P1 standard via coordinate baricentriche.
+% Analisi teorica del decadimento dell'ampiezza e dell'accumulo dissipativo su trasferimenti reiterati.
+
+\subsection{\texorpdfstring{Global Continuous $L^2$-Projection Remapping}{Global Continuous L2-Projection Remapping}}
+\label{subsec:l2_projection}
+% Formulazione debole variazionale continua int phi_i^{new} u^{new} dOmega = int phi_i^{new} u_h^{old} dOmega.
+% Quadratura di Dunavant di grado 5.
+% Proprietà di conservazione integrale della massa: 1^T M^{new} u^{new} == 1^T b.
+% Analisi del trade-off: abbattimento dell'errore vs dominanza del costo computazionale (collo di bottiglia runtime).
+
+\subsection{Arbitrary Lagrangian-Eulerian (ALE) Formulation}
+\label{subsec:ale_formulation}
+% Cinematica differenziale continua di mesh con velocità nodale w = dX/dt|_chi.
+% Linearizzazione dello spostamento target GNN su finestre temporali N_a: w = Delta X / (N_a * dt).
+% Equazione ALE debole a coordinate di riferimento costanti.
+
+\subsection{Discrete Geometric Conservation Law (D-GCL)}
+\label{subsec:dgcl}
+% Preservazione analitica di soluzioni costanti e costanza di volume.
+% Condizione algebrica: ((M^{n+1} - M^n)/dt) * 1 + C_mesh(w) * 1 = 0.
+% Formulazione esatta dell'operatore di convezione di griglia C_mesh su configurazione midpoint x^{mid}.
+% Eliminazione rigorosa del remapping esplicito (Remap Time = 0).

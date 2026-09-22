@@ -1,0 +1,17 @@
+
+\subsection{Governing PDE: Transient Convection-Diffusion}
+\label{subsec:pde_governing}
+% Equazione di convezione-diffusione instazionaria 2D su Omega x (0, T].
+% Condizioni al contorno di Dirichlet e condizioni iniziali.
+% Formulazione MMS (Manufactured Solutions) per verifica esatta analitica.
+
+\subsection{\texorpdfstring{Standard $P_1$ Finite Element Discretization}{Standard P1 Finite Element Discretization}}
+\label{subsec:fem_discretization}
+% Forma debole spaziale con elementi finiti lineari su triangoli.
+% Discretizzazione temporale BDF1 (Backward Euler).
+% Proprietà asintotiche attese di convergenza: O(h^2) in L2, O(h) in H1, O(dt) nel tempo.
+
+\subsection{\texorpdfstring{Variational $r$-Adaptation and Oracle Formulation}{Variational r-Adaptation and Oracle Formulation}}
+\label{subsec:oracle_formulation}
+% Funzionale multiobiettivo continuo: termine di concentrazione gradiente/errore di interpolazione + regolarizzazione di qualità geometrica/distorsione.
+% Problema vincolato di ottimizzazione non lineare (L-BFGS-B con barriera) come Oracle di riferimento upper-bound.
