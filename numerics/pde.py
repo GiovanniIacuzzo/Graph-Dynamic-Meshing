@@ -222,3 +222,133 @@ class AdvectionDiffusion2DMMS(BasePDE):
         """
         u_bnd, _, _ = self.evaluate_exact(x_bnd, y_bnd, t)
         return u_bnd
+
+
+"""
+Definizione analitica della PDE di Convezione-Diffusione 2D con Manufactured Solution (MMS).
+
+Equazione governante:
+    du/dt + b · grad(u) - nu * Laplacian(u) = f(x, y, t)   su Omega = [0, 1]^2, t in [0, T]
+
+Soluzione esatta target:
+    u(x, y, t) = G(x, y, t) * S(x, y) * T_decay(t)
+con:
+    G(x, y, t) = exp( -((x - cx(t))^2 + (y - cy(t))^2) / (2 * sigma^2) )
+    S(x, y)    = sin(pi * x) * sin(pi * y)
+    T_decay(t) = exp( -beta * t )
+    cx(t)      = 0.3 + 0.4 * (t / T)
+    cy(t)      = 0.35 + 0.3 * (t / T)
+"""
+
+class ManufacturedConvectionDiffusion2D:
+    """
+    Gestione analitica esatta della Manufactured Solution e del termine sorgente f(x, y, t).
+    Tutte le derivate parziali (spaziali e temporali) sono espresse in forma chiusa.
+    """
+
+    def __init__(
+        self,
+        bx: float = 0.4,
+        by: float = 0.2,
+        nu: float = 1e-3,
+        sigma: float = 0.06,
+        beta: float = 0.5,
+        T: float = 0.5
+    ):
+        self.bx = float(bx)
+        self.by = float(by)
+        self.nu = float(nu)
+        self.sigma = float(sigma)
+        self.beta = float(beta)
+        self.T = float(T)
+
+        self.inv_sigma2 = 1.0 / (self.sigma ** 2)
+        self.inv_sigma4 = 1.0 / (self.sigma ** 4)
+
+        # Velocità di traslazione del centro cx'(t) e cy'(t)
+        self.dcx_dt = 0.4 / self.T
+        self.dcy_dt = 0.3 / self.T
+
+    def get_center(self, t: float) -> Tuple[float, float]:
+        """Calcola la traiettoria del centro della campana al tempo t."""
+        cx = 0.3 + 0.4 * (t / self.T)
+        cy = 0.35 + 0.3 * (t / self.T)
+        return cx, cy
+
+    def evaluate_exact(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        t: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Calcola analiticamente la soluzione esatta e tutte le sue derivate necessarie per il forcing:
+            u, u_x, u_y, u_xx, u_yy, u_t, f
+
+        Returns:
+            u    : [N] soluzione esatta
+            ux   : [N] derivata prima spaziale rispetto a x
+            uy   : [N] derivata prima spaziale rispetto a y
+            uxx  : [N] derivata seconda spaziale rispetto a x
+            uyy  : [N] derivata seconda spaziale rispetto a y
+            ut   : [N] derivata temporale prima
+            f    : [N] termine sorgente per il residuo differenziale nullo
+        """
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+
+        cx, cy = self.get_center(t)
+        rx = x - cx
+        ry = y - cy
+        r2 = rx**2 + ry**2
+
+        # 1. Componenti base
+        G = np.exp(-0.5 * r2 * self.inv_sigma2)
+        S = np.sin(np.pi * x) * np.sin(np.pi * y)
+        T_decay = np.exp(-self.beta * t)
+
+        u = G * S * T_decay
+
+        # 2. Derivate spaziali di S(x, y)
+        Sx = np.pi * np.cos(np.pi * x) * np.sin(np.pi * y)
+        Sy = np.pi * np.sin(np.pi * x) * np.cos(np.pi * y)
+        Sxx = - (np.pi ** 2) * S
+        Syy = - (np.pi ** 2) * S
+
+        # 3. Derivate spaziali di G(x, y, t)
+        Gx = - rx * self.inv_sigma2 * G
+        Gy = - ry * self.inv_sigma2 * G
+        Gxx = ( (rx * self.inv_sigma2)**2 - self.inv_sigma2 ) * G
+        Gyy = ( (ry * self.inv_sigma2)**2 - self.inv_sigma2 ) * G
+
+        # 4. Derivate prime spaziali di u = G * S * T_decay
+        ux = (Gx * S + G * Sx) * T_decay
+        uy = (Gy * S + G * Sy) * T_decay
+
+        # 5. Derivate seconde spaziali di u
+        uxx = (Gxx * S + 2.0 * Gx * Sx + G * Sxx) * T_decay
+        uyy = (Gyy * S + 2.0 * Gy * Sy + G * Syy) * T_decay
+
+        # 6. Derivata temporale di G:
+        # dG/dt = dG/drx * drx/dt + dG/dry * dry/dt = (-rx/sigma^2 * (-dcx/dt) - ry/sigma^2 * (-dcy/dt)) * G
+        Gt = (rx * self.dcx_dt + ry * self.dcy_dt) * self.inv_sigma2 * G
+        # Derivata temporale di u: u_t = (Gt * S * T_decay) + (G * S * (-beta * T_decay))
+        ut = (Gt - self.beta * G) * S * T_decay
+
+        # 7. Termine sorgente analitico f(x, y, t)
+        # f = u_t + b · grad(u) - nu * Laplacian(u)
+        laplacian_u = uxx + uyy
+        convection_u = self.bx * ux + self.by * uy
+        f = ut + convection_u - self.nu * laplacian_u
+
+        return u, ux, uy, uxx, uyy, ut, f
+
+    def evaluate_forcing(self, x: np.ndarray, y: np.ndarray, t: float) -> np.ndarray:
+        """Restituisce direttamente il forcing f(x, y, t) sui punti indicati."""
+        _, _, _, _, _, _, f = self.evaluate_exact(x, y, t)
+        return f
+
+    def evaluate_solution(self, x: np.ndarray, y: np.ndarray, t: float) -> np.ndarray:
+        """Restituisce il valore puntuale della soluzione esatta."""
+        u, _, _, _, _, _, _ = self.evaluate_exact(x, y, t)
+        return u

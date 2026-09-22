@@ -249,3 +249,324 @@ class ClassicalFEM2DSolver:
         elapsed_time = time.perf_counter() - t0
 
         return u_next, res_norm, 1, elapsed_time
+
+"""
+numerics/fem.py
+Solutore numerico ad Elementi Finiti P1 per Convezione-Diffusione transiente 2D.
+
+Implementa:
+    - Assemblaggio vettorializzato di matrici sparse: Massa (M), Rigidezza (K), Convezione (C)
+    - Quadratura di Gauss di grado 5 su triangoli per il termine di carico F(t)
+    - Integrazione temporale con Backward Euler (BDF1) e Dirichlet forte
+    - Calcolo del gradiente nodale mediato per area (P1 area-weighted nodal recovery)
+"""
+
+from typing import Tuple, Dict, Any, Optional
+import numpy as np
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
+
+from geometry.mesh import TriangularMesh2D
+from numerics.pde import ManufacturedConvectionDiffusion2D
+
+
+# =============================================================================
+# REGOLA DI QUADRATURA SU TRIANGOLI DI RIFERIMENTO (DUNAVANT GRADO 5, 7 PUNTI)
+# Coordinate baricentriche (lambda_1, lambda_2, lambda_3) e pesi normalizzati (somma = 0.5)
+# =============================================================================
+def _get_triangle_quadrature_degree_5() -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Restituisce punti di quadratura (coordinate baricentriche xi, eta) e pesi
+    per il triangolo di riferimento T_ref = {(xi, eta) : xi >= 0, eta >= 0, xi + eta <= 1}.
+    Area del triangolo di riferimento = 0.5.
+    """
+    # Punto centrale
+    p1 = [1.0 / 3.0, 1.0 / 3.0]
+    w1 = 0.225 / 2.0  # peso scalato sull'area 0.5
+
+    # Gruppo 1 (3 punti permutati)
+    a = (6.0 - np.sqrt(15.0)) / 21.0
+    b = (9.0 + 2.0 * np.sqrt(15.0)) / 21.0
+    w_grp1 = ((155.0 - np.sqrt(15.0)) / 1200.0) / 2.0
+
+    p_grp1 = [
+        [a, a],
+        [a, b],
+        [b, a]
+    ]
+
+    # Gruppo 2 (3 punti permutati)
+    c = (6.0 + np.sqrt(15.0)) / 21.0
+    d = (9.0 - 2.0 * np.sqrt(15.0)) / 21.0
+    w_grp2 = ((155.0 + np.sqrt(15.0)) / 1200.0) / 2.0
+
+    p_grp2 = [
+        [c, c],
+        [c, d],
+        [d, c]
+    ]
+
+    points = np.array([p1] + p_grp1 + p_grp2, dtype=np.float64)  # shape [7, 2] (xi, eta)
+    weights = np.array([w1] + [w_grp1] * 3 + [w_grp2] * 3, dtype=np.float64)  # shape [7]
+    return points, weights
+
+
+class ConvectionDiffusionFEM2D:
+    """
+    Solutore FEM Galerkin continuo P1 per convezione-diffusione:
+        M du/dt + C u + nu K u = F(t)
+    """
+
+    def __init__(
+        self,
+        mesh: TriangularMesh2D,
+        pde: ManufacturedConvectionDiffusion2D
+    ):
+        self.mesh = mesh
+        self.pde = pde
+        self.num_nodes = mesh.num_nodes
+        self.num_cells = mesh.num_cells
+        self.nodes = mesh.nodes
+        self.cells = mesh.cells
+        self.boundary_nodes = mesh.boundary_nodes
+
+        # Punti di quadratura grado 5
+        self.qp_ref, self.qw_ref = _get_triangle_quadrature_degree_5()
+
+        # Precomputazione geometrica locale P1
+        self._compute_element_geometry()
+
+        # Assemblaggio matrici statiche (indipendenti da t)
+        self.M = self._assemble_mass_matrix()
+        self.K = self._assemble_stiffness_matrix()
+        self.C = self._assemble_convection_matrix()
+
+    def _compute_element_geometry(self):
+        """Precomputa Jacobiani, aree e gradienti delle funzioni di forma su ogni elemento."""
+        x = self.nodes[:, 0]
+        y = self.nodes[:, 1]
+        c = self.cells
+
+        x1, y1 = x[c[:, 0]], y[c[:, 0]]
+        x2, y2 = x[c[:, 1]], y[c[:, 1]]
+        x3, y3 = x[c[:, 2]], y[c[:, 2]]
+
+        # Determinante Jacobiano del mapping affine J_e = 2 * Area(K_e)
+        det_J = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
+        self.det_J = det_J
+        self.areas = 0.5 * np.abs(det_J)
+
+        # Gradienti costanti delle 3 funzioni di forma locali:
+        # phi_1 = 1 - xi - eta, phi_2 = xi, phi_3 = eta
+        # grad(phi_i) = [dphi_i/dx, dphi_i/dy]
+        inv_det = 1.0 / det_J
+        self.dphi_dx = np.zeros((self.num_cells, 3), dtype=np.float64)
+        self.dphi_dy = np.zeros((self.num_cells, 3), dtype=np.float64)
+
+        self.dphi_dx[:, 0] = (y2 - y3) * inv_det
+        self.dphi_dx[:, 1] = (y3 - y1) * inv_det
+        self.dphi_dx[:, 2] = (y1 - y2) * inv_det
+
+        self.dphi_dy[:, 0] = (x3 - x2) * inv_det
+        self.dphi_dy[:, 1] = (x1 - x3) * inv_det
+        self.dphi_dy[:, 2] = (x2 - x1) * inv_det
+
+    def _assemble_mass_matrix(self) -> sp.csr_matrix:
+        """Assembla la matrice di massa globale: M_ij = integral(phi_i * phi_j)."""
+        # Su ogni triangolo P1: M_local = (Area / 12) * [[2, 1, 1], [1, 2, 1], [1, 1, 2]]
+        base_M = np.array([
+            [2.0, 1.0, 1.0],
+            [1.0, 2.0, 1.0],
+            [1.0, 1.0, 2.0]
+        ], dtype=np.float64) / 12.0
+
+        M_elem = self.areas[:, None, None] * base_M[None, :, :]  # [M, 3, 3]
+
+        rows = np.repeat(self.cells[:, :, None], 3, axis=2).flatten()
+        cols = np.repeat(self.cells[:, None, :], 3, axis=1).flatten()
+        vals = M_elem.flatten()
+
+        M_global = sp.coo_matrix((vals, (rows, cols)), shape=(self.num_nodes, self.num_nodes)).tocsr()
+        return M_global
+
+    def _assemble_stiffness_matrix(self) -> sp.csr_matrix:
+        """Assembla la matrice di rigidezza: K_ij = integral(grad phi_i · grad phi_j)."""
+        # grad phi_i e grad phi_j sono costanti su ciascun elemento
+        # K_local_ij = Area * (dphi_dx_i * dphi_dx_j + dphi_dy_i * dphi_dy_j)
+        gx = self.dphi_dx[:, :, None] * self.dphi_dx[:, None, :]  # [M, 3, 3]
+        gy = self.dphi_dy[:, :, None] * self.dphi_dy[:, None, :]  # [M, 3, 3]
+        K_elem = self.areas[:, None, None] * (gx + gy)
+
+        rows = np.repeat(self.cells[:, :, None], 3, axis=2).flatten()
+        cols = np.repeat(self.cells[:, None, :], 3, axis=1).flatten()
+        vals = K_elem.flatten()
+
+        K_global = sp.coo_matrix((vals, (rows, cols)), shape=(self.num_nodes, self.num_nodes)).tocsr()
+        return K_global
+
+    def _assemble_convection_matrix(self) -> sp.csr_matrix:
+        """Assembla la matrice convettiva: C_ij = integral(phi_i * (b · grad phi_j))."""
+        # b · grad phi_j è costante su ciascun triangolo: [M, 3]
+        b_dot_grad = self.pde.bx * self.dphi_dx + self.pde.by * self.dphi_dy  # [M, 3]
+        int_phi = (self.areas / 3.0)[:, None, None]  # [M, 1, 1]
+
+        # int_phi viene replicato sulle 3 righe i, b_dot_grad sulle 3 colonne j -> [M, 3, 3]
+        C_elem = int_phi * np.ones((1, 3, 1), dtype=np.float64) * b_dot_grad[:, None, :]
+
+        rows = np.repeat(self.cells[:, :, None], 3, axis=2).flatten()
+        cols = np.repeat(self.cells[:, None, :], 3, axis=1).flatten()
+        vals = C_elem.flatten()
+
+        C_global = sp.coo_matrix((vals, (rows, cols)), shape=(self.num_nodes, self.num_nodes)).tocsr()
+        return C_global
+
+    def assemble_rhs(self, t: float) -> np.ndarray:
+        """
+        Calcola il vettore di carico F_i = integral(phi_i * f(x, y, t))
+        utilizzando la quadratura su triangolo di grado 5 (7 punti).
+        """
+        F = np.zeros(self.num_nodes, dtype=np.float64)
+        c = self.cells
+        x = self.nodes[:, 0]
+        y = self.nodes[:, 1]
+
+        x1, y1 = x[c[:, 0]], y[c[:, 0]]
+        x2, y2 = x[c[:, 1]], y[c[:, 1]]
+        x3, y3 = x[c[:, 2]], y[c[:, 2]]
+
+        # Per ciascuno dei 7 punti di quadratura Dunavant
+        for (xi, eta), w in zip(self.qp_ref, self.qw_ref):
+            # Funzioni di forma nel punto di quadratura
+            phi1 = 1.0 - xi - eta
+            phi2 = xi
+            phi3 = eta
+
+            # Coordinate fisiche (x_q, y_q) su ciascun triangolo
+            xq = phi1 * x1 + phi2 * x2 + phi3 * x3
+            yq = phi1 * y1 + phi2 * y2 + phi3 * y3
+
+            # Valutazione analitica esatta del forcing MMS f(xq, yq, t)
+            f_vals = self.pde.evaluate_forcing(xq, yq, t)
+
+            # Contributo integrato: w * f * det_J
+            # Fattore 2 * w perché qw_ref somma a 0.5 (area riferimento), e det_J = 2 * Area
+            factor = (2.0 * w) * self.areas * f_vals
+
+            np.add.at(F, c[:, 0], factor * phi1)
+            np.add.at(F, c[:, 1], factor * phi2)
+            np.add.at(F, c[:, 2], factor * phi3)
+
+        return F
+
+    def step_backward_euler(
+        self,
+        u_n: np.ndarray,
+        dt: float,
+        t_next: float
+    ) -> np.ndarray:
+        """
+        Avanza di un passo temporale risolvendo:
+            (M/dt + C + nu*K) u^{n+1} = (M/dt) u^n + F^{n+1}
+        con condizioni di Dirichlet omogenee u = 0 sui boundary nodes.
+        """
+        # Matrice di sistema: A = (1/dt) * M + C + nu * K
+        inv_dt = 1.0 / dt
+        A = inv_dt * self.M + self.C + self.pde.nu * self.K
+
+        # Termine noto: b_vec = (1/dt) * M * u_n + F(t_next)
+        F_next = self.assemble_rhs(t_next)
+        b_vec = inv_dt * (self.M @ u_n) + F_next
+
+        # Applicazione rigorosa delle condizioni al bordo di Dirichlet omogenee (u_bnd = 0)
+        # Rimpiazzo righe corrispondenti al contorno con identità
+        A = A.tolil()
+        bnd = self.boundary_nodes
+        A[bnd, :] = 0.0
+        A[bnd, bnd] = 1.0
+        b_vec[bnd] = 0.0
+
+        A = A.tocsr()
+
+        # Risoluzione diretta del sistema lineare sparso (SuperLU)
+        u_next = spla.spsolve(A, b_vec)
+        return u_next
+
+
+def compute_nodal_gradient(
+    nodes: np.ndarray,
+    cells: np.ndarray,
+    u: np.ndarray
+) -> np.ndarray:
+    """
+    Calcola il gradiente nodale P1 continuo mediante media pesata per area.
+
+    Formula:
+        grad_u(X_i) = (sum_{e in T_i} Area_e * grad_u_e) / (sum_{e in T_i} Area_e)
+
+    Returns:
+        grad_u: [N, 2] gradiente sui nodi (du/dx, du/dy)
+    """
+    N = nodes.shape[0]
+    x = nodes[:, 0]
+    y = nodes[:, 1]
+
+    x1, y1 = x[cells[:, 0]], y[cells[:, 0]]
+    x2, y2 = x[cells[:, 1]], y[cells[:, 1]]
+    x3, y3 = x[cells[:, 2]], y[cells[:, 2]]
+
+    det_J = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
+    areas = 0.5 * np.abs(det_J)
+    inv_det = 1.0 / det_J
+
+    # Gradienti delle funzioni di forma su ciascun elemento
+    dphi_dx = np.column_stack([(y2 - y3) * inv_det, (y3 - y1) * inv_det, (y1 - y2) * inv_det])
+    dphi_dy = np.column_stack([(x3 - x2) * inv_det, (x1 - x3) * inv_det, (x2 - x1) * inv_det])
+
+    # Valori di u sui vertici degli elementi: [M, 3]
+    u_elem = u[cells]
+
+    # Gradiente P1 elementare costante: [M, 2]
+    elem_grad_x = np.sum(u_elem * dphi_dx, axis=1)
+    elem_grad_y = np.sum(u_elem * dphi_dy, axis=1)
+
+    # Accumulo nodale pesato per area
+    weighted_gx = areas * elem_grad_x
+    weighted_gy = areas * elem_grad_y
+
+    nodal_gx = np.zeros(N, dtype=np.float64)
+    nodal_gy = np.zeros(N, dtype=np.float64)
+    nodal_area_sum = np.zeros(N, dtype=np.float64)
+
+    for i in range(3):
+        node_indices = cells[:, i]
+        np.add.at(nodal_gx, node_indices, weighted_gx)
+        np.add.at(nodal_gy, node_indices, weighted_gy)
+        np.add.at(nodal_area_sum, node_indices, areas)
+
+    inv_total_area = 1.0 / np.maximum(nodal_area_sum, 1e-14)
+    nodal_gx *= inv_total_area
+    nodal_gy *= inv_total_area
+
+    return np.column_stack([nodal_gx, nodal_gy])
+
+
+def compute_field_gradients(
+    mesh: TriangularMesh2D,
+    u: np.ndarray,
+    pde: Optional[ManufacturedConvectionDiffusion2D] = None,
+    t: float = 0.0,
+    gradient_mode: str = "fem"
+) -> np.ndarray:
+    """
+    Funzione ponte per l'estrazione del gradiente a supporto della GNN:
+        - "fem"  : gradiente ricavato numericamente dalla soluzione approssimata u^n
+        - "exact": gradiente analitico esatto del campo MMS (ablation study per isolare l'errore)
+    """
+    if gradient_mode == "fem":
+        return compute_nodal_gradient(mesh.nodes, mesh.cells, u)
+    elif gradient_mode == "exact":
+        assert pde is not None, "pde instance must be provided for exact gradient mode"
+        _, ux, uy, _, _, _, _ = pde.evaluate_exact(mesh.nodes[:, 0], mesh.nodes[:, 1], t)
+        return np.column_stack([ux, uy])
+    else:
+        raise ValueError(f"Modalità gradiente non riconosciuta: {gradient_mode}")
