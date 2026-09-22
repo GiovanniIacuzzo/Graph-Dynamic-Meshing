@@ -94,7 +94,8 @@ Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preser
 │   ├── 🐍 stage_a_campaign.py
 │   ├── 🐍 stage_b_campaign.py
 │   ├── 🐍 stage_b_diagnostics.py
-│   └── 🐍 stage_b_final_ablations.py
+│   ├── 🐍 stage_b_final_ablations.py
+│   └── 🐍 stage_c_campaign.py
 │
 ├── 📁 geometry
 │   ├── 🐍 __init__.py
@@ -121,10 +122,30 @@ Garantendo che $\Delta X_{\text{safe}} = \alpha_{\text{global}} \Delta X$ preser
 │   ├── 🐍 objective.py
 │   └── 🐍 optimizer.py
 │
+├── 📁 paper
+│   ├── 📁 images
+│   │
+│   ├── 📁 sections
+│   │   ├── 📄 01_introduction.tex
+│   │   ├── 📄 02_formulation.tex
+│   │   ├── 📄 03_gdm_framework.tex
+│   │   ├── 📄 04_ale_dgcl.tex
+│   │   ├── 📄 05_diagnostics.tex
+│   │   ├── 📄 06_dynamic_benchmark.tex
+│   │   ├── 📄 07_discussion.tex
+│   │   └── 📄 08_conclusions.tex
+│   │
+│   ├── 📕 paper.pdf
+│   ├── 📄 paper.tex
+│   └── 📄 references.bib
+│
 ├── 📁 results
 │
 ├── 📁 tests
 │   ├── 🐍 __init__.py
+│   ├── 🐍 test_ale_convergence.py
+│   ├── 🐍 test_ale_gcl.py
+│   ├── 🐍 test_ale_replay_stage_b.py
 │   ├── 🐍 test_dataset.py
 │   ├── 🐍 test_dynamic_one_step.py
 │   ├── 🐍 test_fem_convergence.py
