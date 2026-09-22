@@ -168,6 +168,8 @@ pytest tests/ -v
 
 ## 5. Guida all'Uso e Riproducibilità Scientifica
 
+### 5.1. Pipeline dello Stage A (Adattività Geometrica Statica)
+
 ### Passo 1: Generazione Offline del Dataset
 Genera i 210 campioni (train, validation, test interpolation e test extrapolation OOD) campionando i gradienti fisici e risolvendo l'ottimizzazione variazionale:
 
@@ -197,6 +199,53 @@ Esegue l'intera suite di validazione scientifica (Test T1–T5), generando le 5 
 ```bash
 python experiments/stage_a_campaign.py
 ```
+
+### 5.2. Pipeline dello Stage B (Accoppiamento Dinamico PDE Transiente)
+### Passo 5: Test Unitari e di Consistenza Numerica
+Verifica in modo disaccoppiato l'esattezza della soluzione manifatturata (MMS), la convergenza spaziale e temporale del solutore FEM e l'integrazione del singolo passo accoppiato:
+
+```bash
+# Verifica consistenza Manufactured Solution e forcing analitico
+pytest tests/test_pde_mms.py -v
+
+# Verifica ordini asintotici di convergenza spazio-temporale (O(h^2) e O(dt))
+pytest tests/test_fem_convergence.py -v
+
+# Verifica one-step coupling (FEM -> Feature Extraction -> GNN -> Safety -> Remap)
+pytest tests/test_dynamic_one_step.py -v
+```
+
+### Passo 6: Suite Diagnostica Operatori di Remapping
+Esegue l'analisi quantitativa comparativa tra l'interpolazione continua pointwise $P_1$ e l'operatore di proiezione variazionale $L_2$-Projection:
+
+```bash
+# Diagnostica P1: Esattezza (R1), Convergenza (R2), Ampiezza (R3), Localizzazione (R4), Accumulo (R5)
+pytest tests/test_remap_diagnostics.py -s -v
+
+# Diagnostica L2-Projection: Esattezza (L1), Convergenza (L2), Ampiezza (L3), Omotopia (L4), Costo (L5), Massa (L6)
+pytest tests/test_remap_l2.py -s -v
+
+# Batteria diagnostica dinamica D1-D5 (Remap isolato, FEM discolpato D2, Reset esatto D3, Sweep frequenza D5)
+python experiments/stage_b_diagnostics.py
+```
+
+### Passo 7: Campagna Sperimentale Dinamica Multi-Modello
+Esegue la simulazione transiente completa a 100 time-step sulle 4 configurazioni ($B_0$Fixed, $B_1$GDM w/ $P_1$, $B_2$ GDM w/ $L_2$, $B_3$ Instantaneous Interpolation Oracle), generando la tabella riassuntiva LaTeX e le 8 figure scientifiche per il paper:
+
+```bash
+python experiments/stage_b_campaign.py
+```
+
+I grafici e i report vengono salvati rispettivamente in `results/stage_b/figures/` e `results/stage_b/tables/table_stage_b_summary.tex`.
+
+### Passo 8: Studi Ablativi Conclusivi dello Stage B
+Esegue l'ablation della sorgente del gradiente nodale (FEM vs Esatto MMS) e lo sweep di sensibilità alla frequenza di adattamento temporale ($\Delta n_{adapt} \in \{5,10,20,50\}$):
+
+```bash
+python experiments/stage_b_final_ablations.py
+```
+
+I dati strutturati vengono esportati in `results/stage_b/ablations/stage_b_final_ablations.json`.
 
 ---
 
