@@ -1,307 +1,210 @@
 """
 numerics/ale.py
-Integrazione differenziale Arbitrary Lagrangian-Eulerian (ALE) su domini a mesh mobile.
-
-Risolve il bilancio di trasporto-diffusione sul dominio tempo-variante Omega(t):
-    d/dt int_{Omega(t)} u dOmega + int_{Omega(t)} ((b - w) . grad(u)) dOmega
-        + int_{Omega(t)} nu grad(u) . grad(v) dOmega = int_{Omega(t)} f v dOmega
-
-dove:
-    w = (X_{t+1} - X_t) / dt  e' la velocita' arbitraria della griglia.
-
-Include:
-    - Stabilizzazione SUPG sulla velocita' convettiva relativa c_rel = b - w.
-    - Calcolo separato e rigoroso del residuo della Geometric Conservation Law (GCL).
+Formulazione Arbitrary Lagrangian-Eulerian (ALE) FEM P1 conservativa con D-GCL.
+Discretizzazione temporale:
+    (1/dt) * (M^{n+1} u^{n+1} - M^n u^n) + C_{mesh} u^{n+1} + C_{phys} u^{n+1} + nu * K^{n+1} u^{n+1} = F^{n+1}
 """
 
-from typing import Tuple, Dict, Any, Optional
-import time
+from typing import Tuple, Dict, Any
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from geometry.mesh import TriangularMesh2D
-from numerics.pde import BasePDE
+from numerics.fem import _get_triangle_quadrature_degree_5
 
 
 class ALESolver2D:
-    """
-    Risolutore numerico ALE continuo P1 per convezione-diffusione su mesh triangolari mobili.
-    """
-
-    def __init__(
-        self,
-        pde: BasePDE,
-        theta: float = 1.0,
-        use_supg: bool = True
-    ):
-        """
-        Input:
-            pde     : istanza di BasePDE con parametri fisici e forzante
-            theta   : parametro di time-stepping (1.0 = Implicit Euler, 0.5 = Crank-Nicolson)
-            use_supg: flag per abilitare la stabilizzazione SUPG sulla velocità relativa
-        """
-        self.pde = pde
-        self.theta = float(theta)
-        self.use_supg = bool(use_supg)
+    def __init__(self, pde_model: Any, nu: float = 1e-3, bx: float = 0.4, by: float = 0.2):
+        self.pde = pde_model
+        self.nu = float(nu)
+        self.b = np.array([bx, by], dtype=np.float64)
 
     @staticmethod
-    def compute_mesh_velocity(
-        mesh_t: TriangularMesh2D,
-        mesh_t1: TriangularMesh2D,
-        dt: float
-    ) -> np.ndarray:
-        """
-        Calcola la velocità nodale della griglia:
-            w = (X_{t+1} - X_t) / dt
-        Returns:
-            array [N, 2], float64
-        """
-        assert dt > 0.0, f"dt deve essere positivo, ottenuto: {dt}"
-        assert mesh_t.num_nodes == mesh_t1.num_nodes, "Le due mesh devono avere lo stesso numero di nodi"
-        w = (mesh_t1.nodes - mesh_t.nodes) / dt
-        return np.ascontiguousarray(w, dtype=np.float64)
+    def compute_mesh_velocity(nodes_n: np.ndarray, nodes_next: np.ndarray, dt: float) -> np.ndarray:
+        return (nodes_next - nodes_n) / dt
 
-    def verify_gcl(
-        self,
-        mesh_t: TriangularMesh2D,
-        mesh_t1: TriangularMesh2D,
-        dt: float
-    ) -> Tuple[float, np.ndarray]:
-        """
-        Verifica la Geometric Conservation Law (GCL) a livello discreto:
-        Uno stato costante u == 1 deve soddisfare:
-            int_{Omega_{t+1}} 1 dOmega - int_{Omega_t} 1 dOmega - int_t^{t+1} int_{Omega} div(w) dOmega dt = 0
+    @staticmethod
+    def assemble_mass_matrix(mesh: TriangularMesh2D) -> sp.csr_matrix:
+        cells = mesh.cells
+        nodes = mesh.nodes
+        num_nodes = mesh.num_nodes
 
-        Returns:
-            gcl_residual_norm : norma L2 normalizzata del residuo GCL su tutti i nodi
-            gcl_nodal_residual: vettore dei residui per nodo [N]
-        """
-        # Coordinate e connettività
-        cells = mesh_t.cells
-        x_t, y_t = mesh_t.nodes[:, 0], mesh_t.nodes[:, 1]
-        x_t1, y_t1 = mesh_t1.nodes[:, 0], mesh_t1.nodes[:, 1]
+        x1, y1 = nodes[cells[:, 0], 0], nodes[cells[:, 0], 1]
+        x2, y2 = nodes[cells[:, 1], 0], nodes[cells[:, 1], 1]
+        x3, y3 = nodes[cells[:, 2], 0], nodes[cells[:, 2], 1]
 
-        # Calcolo aree triangolari a t e t+1
-        j_t = (x_t[cells[:, 1]] - x_t[cells[:, 0]]) * (y_t[cells[:, 2]] - y_t[cells[:, 0]]) - \
-              (x_t[cells[:, 2]] - x_t[cells[:, 0]]) * (y_t[cells[:, 1]] - y_t[cells[:, 0]])
-        areas_t = 0.5 * j_t
+        areas = 0.5 * np.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1))
 
-        j_t1 = (x_t1[cells[:, 1]] - x_t1[cells[:, 0]]) * (y_t1[cells[:, 2]] - y_t1[cells[:, 0]]) - \
-               (x_t1[cells[:, 2]] - x_t1[cells[:, 0]]) * (y_t1[cells[:, 1]] - y_t1[cells[:, 0]])
-        areas_t1 = 0.5 * j_t1
-
-        # Differenza geometrica di volume per elemento: Delta V_e = Area_{t+1} - Area_t
-        delta_vol_elem = areas_t1 - areas_t
-
-        # Divergenza del campo di velocità della mesh w integrata sulla cella:
-        # int_e div(w) dOmega = int_e (dw_x/dx + dw_y/dy) dOmega
-        w = self.compute_mesh_velocity(mesh_t, mesh_t1, dt)
-        w1_x, w1_y = w[cells[:, 0], 0], w[cells[:, 0], 1]
-        w2_x, w2_y = w[cells[:, 1], 0], w[cells[:, 1], 1]
-        w3_x, w3_y = w[cells[:, 2], 0], w[cells[:, 2], 1]
-
-        # Calcolo del gradiente su mesh media / mesh t1
-        nodes_mid = 0.5 * (mesh_t.nodes + mesh_t1.nodes)
-        x_m, y_m = nodes_mid[:, 0], nodes_mid[:, 1]
-        j_m = (x_m[cells[:, 1]] - x_m[cells[:, 0]]) * (y_m[cells[:, 2]] - y_m[cells[:, 0]]) - \
-              (x_m[cells[:, 2]] - x_m[cells[:, 0]]) * (y_m[cells[:, 1]] - y_m[cells[:, 0]])
-        areas_m = 0.5 * j_m
-
-        # Derivate spaziali delle funzioni di forma su configurazione media
-        b1, c1 = y_m[cells[:, 1]] - y_m[cells[:, 2]], x_m[cells[:, 2]] - x_m[cells[:, 1]]
-        b2, c2 = y_m[cells[:, 2]] - y_m[cells[:, 0]], x_m[cells[:, 0]] - x_m[cells[:, 2]]
-        b3, c3 = y_m[cells[:, 0]] - y_m[cells[:, 1]], x_m[cells[:, 1]] - x_m[cells[:, 0]]
-
-        inv_det_m = 1.0 / j_m
-        div_w_elem = (
-            (w1_x * b1 + w2_x * b2 + w3_x * b3) +
-            (w1_y * c1 + w2_y * c2 + w3_y * c3)
-        ) * inv_det_m  # costante per triangolo P1
-
-        int_div_w = div_w_elem * areas_m * dt
-
-        # Residuo locale GCL per elemento: Delta V_e - int_t^{t+1} int_e div(w)
-        elem_gcl = delta_vol_elem - int_div_w
-
-        # Assemblaggio nodale
-        nodal_res = np.zeros(mesh_t.num_nodes, dtype=np.float64)
-        np.add.at(nodal_res, cells.flatten(), np.repeat(elem_gcl / 3.0, 3))
-
-        total_area = np.sum(areas_t1)
-        res_norm = float(np.linalg.norm(nodal_res) / max(total_area, 1e-12))
-
-        return res_norm, nodal_res
-
-    def step(
-        self,
-        mesh_t: TriangularMesh2D,
-        mesh_t1: TriangularMesh2D,
-        state_t: np.ndarray,
-        t_current: float,
-        dt: float
-    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any], float]:
-        """
-        Esegue un singolo avanzamento temporale risolvendo la PDE accoppiata ALE.
-
-        Input:
-            mesh_t   : geometria al tempo t
-            mesh_t1  : geometria al tempo t + dt (predetta e validata dal safety filter)
-            state_t  : stato scalare u_t definito sui nodi di mesh_t, shape [N]
-            t_current: tempo corrente
-            dt       : passo temporale
-
-        Output:
-            state_t1      : soluzione calcolata u_{t+1} sulla mesh deformata mesh_t1, [N]
-            mesh_velocity : campo di velocità nodale w [N, 2]
-            solver_metrics: dizionario di telemetria e diagnostica numerica
-            gcl_residual  : scalare dell'errore di conservazione geometrica
-        """
-        t0 = time.perf_counter()
-        t_next = t_current + dt
-        num_nodes = mesh_t.num_nodes
-        cells = mesh_t.cells
-
-        # 1. Calcolo cinematica della mesh: w = (X_{t+1} - X_t) / dt
-        w = self.compute_mesh_velocity(mesh_t, mesh_t1, dt)
-
-        # 2. Verifica del residuo GCL prima del solutore
-        gcl_res, _ = self.verify_gcl(mesh_t, mesh_t1, dt)
-
-        # 3. Configurazione media/valutazione per assemblaggio
-        # Utilizziamo la configurazione a t^{n+theta}
-        nodes_eval = (1.0 - self.theta) * mesh_t.nodes + self.theta * mesh_t1.nodes
-        mesh_eval = TriangularMesh2D(nodes_eval, cells)
-
-        # Estrazione gradienti funzioni di forma su mesh_eval
-        x1, y1 = nodes_eval[cells[:, 0], 0], nodes_eval[cells[:, 0], 1]
-        x2, y2 = nodes_eval[cells[:, 1], 0], nodes_eval[cells[:, 1], 1]
-        x3, y3 = nodes_eval[cells[:, 2], 0], nodes_eval[cells[:, 2], 1]
-
-        det_J = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
-        areas = 0.5 * det_J
-        assert np.all(det_J > 1e-15), "Rilevati elementi invertiti nella configurazione ALE intermedia"
-
-        b1, c1 = y2 - y3, x3 - x2
-        b2, c2 = y3 - y1, x1 - x3
-        b3, c3 = y1 - y2, x2 - x1
-        inv_det = 1.0 / det_J
-
-        grad_phi = np.empty((mesh_t.num_cells, 3, 2), dtype=np.float64)
-        grad_phi[:, 0, 0] = b1 * inv_det
-        grad_phi[:, 0, 1] = c1 * inv_det
-        grad_phi[:, 1, 0] = b2 * inv_det
-        grad_phi[:, 1, 1] = c2 * inv_det
-        grad_phi[:, 2, 0] = b3 * inv_det
-        grad_phi[:, 2, 1] = c3 * inv_det
-
-        # 4. Calcolo velocità relativa convettiva: c_rel = b - w
-        b_phys = getattr(self.pde, "b", np.array([0.0, 0.0], dtype=np.float64))
-        nu = float(getattr(self.pde, "nu", 1e-3))
-
-        # Media baricentrica di w per ogni cella
-        w_elem = np.mean(w[cells], axis=1)  # [M, 2]
-        c_rel = b_phys[np.newaxis, :] - w_elem  # [M, 2]
-        norm_c_rel = np.linalg.norm(c_rel, axis=1)
-
-        # Parametro SUPG locale basato sulla velocità convettiva relativa c_rel
-        h_k = np.sqrt(4.0 * areas / np.sqrt(3.0))
-        if self.use_supg:
-            pe_local = norm_c_rel * h_k / (2.0 * nu + 1e-14)
-            tau_e = np.where(
-                pe_local > 1.0,
-                h_k / (2.0 * np.maximum(norm_c_rel, 1e-12)),
-                (h_k**2) / (12.0 * nu + 1e-14)
-            )
-        else:
-            tau_e = np.zeros(mesh_t.num_cells, dtype=np.float64)
-
-        # 5. Assemblaggio delle matrici elementari ALE
-        m_ref = np.array([
+        base_M = np.array([
             [2.0, 1.0, 1.0],
             [1.0, 2.0, 1.0],
             [1.0, 1.0, 2.0]
         ], dtype=np.float64) / 12.0
-        elem_M = np.einsum("m,ij->mij", areas, m_ref)
 
-        # Diffusione: nu * int_e grad(phi_i) . grad(phi_j)
-        dot_grad = np.einsum("mih,mjh->mij", grad_phi, grad_phi)
-        elem_K_diff = nu * np.einsum("m,mij->mij", areas, dot_grad)
+        M_elem = areas[:, None, None] * base_M[None, :, :]
+        rows = np.repeat(cells[:, :, None], 3, axis=2).flatten()
+        cols = np.repeat(cells[:, None, :], 3, axis=1).flatten()
+        return sp.coo_matrix((M_elem.flatten(), (rows, cols)), shape=(num_nodes, num_nodes)).tocsr()
 
-        # Advezione relativa ALE: int_e ((b - w) . grad(phi_j)) phi_i
-        c_dot_grad_j = np.einsum("mh,mjh->mj", c_rel, grad_phi)  # [M, 3]
-        elem_K_adv = (1.0 / 3.0) * np.einsum("m,mj->mij", areas, c_dot_grad_j)
+    def assemble_ale_system(
+        self,
+        mesh_n: TriangularMesh2D,
+        mesh_next: TriangularMesh2D,
+        dt: float,
+        t_next: float,
+        pure_gcl: bool = False
+    ) -> Tuple[sp.csr_matrix, sp.csr_matrix, np.ndarray, Dict[str, Any]]:
+        cells = mesh_next.cells
+        num_nodes = mesh_next.num_nodes
+        num_cells = cells.shape[0]
 
-        # Stabilizzazione SUPG: int_e ((b - w) . grad(phi_i)) * tau_e * ((b - w) . grad(phi_j))
-        c_dot_grad_i = np.einsum("mh,mih->mi", c_rel, grad_phi)  # [M, 3]
-        elem_K_supg = np.einsum("m,mi,mj->mij", areas * tau_e, c_dot_grad_i, c_dot_grad_j)
-        elem_M_supg = (1.0 / 3.0) * np.einsum("m,mi->mij", areas * tau_e, c_dot_grad_i)
+        nodes_n = mesh_n.nodes
+        nodes_next = mesh_next.nodes
+        w_nodes = self.compute_mesh_velocity(nodes_n, nodes_next, dt)
+        nodes_mid = 0.5 * (nodes_n + nodes_next)
 
-        # Sistema algebrico accoppiato
-        elem_LHS = (elem_M + elem_M_supg) / dt + self.theta * (elem_K_diff + elem_K_adv + elem_K_supg)
-        elem_RHS = (elem_M + elem_M_supg) / dt - (1.0 - self.theta) * (elem_K_diff + elem_K_adv + elem_K_supg)
+        # 1. Geometria al midpoint per la cinematica convettiva
+        x1_m, y1_m = nodes_mid[cells[:, 0], 0], nodes_mid[cells[:, 0], 1]
+        x2_m, y2_m = nodes_mid[cells[:, 1], 0], nodes_mid[cells[:, 1], 1]
+        x3_m, y3_m = nodes_mid[cells[:, 2], 0], nodes_mid[cells[:, 2], 1]
 
-        # 6. Assemblaggio matrici globali sparse
-        row_indices = np.repeat(cells[:, :, np.newaxis], 3, axis=2).flatten()
-        col_indices = np.repeat(cells[:, np.newaxis, :], 3, axis=1).flatten()
+        det_J_mid = (x2_m - x1_m) * (y3_m - y1_m) - (x3_m - x1_m) * (y2_m - y1_m)
+        areas_mid = 0.5 * np.abs(det_J_mid)
+        inv_det_m = 1.0 / det_J_mid
 
-        LHS_global = sp.coo_matrix(
-            (elem_LHS.flatten(), (row_indices, col_indices)),
-            shape=(num_nodes, num_nodes)
-        ).tocsr()
+        dphi_dx_m = np.column_stack([(y2_m - y3_m) * inv_det_m, (y3_m - y1_m) * inv_det_m, (y1_m - y2_m) * inv_det_m])
+        dphi_dy_m = np.column_stack([(x3_m - x2_m) * inv_det_m, (x1_m - x3_m) * inv_det_m, (x2_m - x1_m) * inv_det_m])
 
-        RHS_global = sp.coo_matrix(
-            (elem_RHS.flatten(), (row_indices, col_indices)),
-            shape=(num_nodes, num_nodes)
-        ).tocsr()
-
-        # Forzante fisica valutata al tempo intermedio
-        t_eval = t_current + self.theta * dt
-        cent_x = np.mean(nodes_eval[cells, 0], axis=1)
-        cent_y = np.mean(nodes_eval[cells, 1], axis=1)
-        f_vals = self.pde.evaluate_forcing(cent_x, cent_y, t_eval)
-
-        f_galerkin = (1.0 / 3.0) * np.einsum("m,m->mi", areas, f_vals)
-        f_supg = np.einsum("m,mi->mi", areas * tau_e * f_vals, c_dot_grad_i)
-        f_elem = f_galerkin + f_supg
-
-        f_global = np.zeros(num_nodes, dtype=np.float64)
-        np.add.at(f_global, cells.flatten(), f_elem.flatten())
-
-        # Vettore termine noto globale
-        rhs_vec = RHS_global.dot(state_t) + f_global
-
-        # 7. Condizioni al contorno di Dirichlet su mesh_t1 al tempo t_next
-        bnd_nodes = mesh_t1.boundary_nodes
-        is_bnd = np.zeros(num_nodes, dtype=bool)
-        is_bnd[bnd_nodes] = True
-        free_nodes = np.where(~is_bnd)[0]
-
-        u_bnd_values = self.pde.evaluate_boundary(
-            mesh_t1.nodes[bnd_nodes, 0],
-            mesh_t1.nodes[bnd_nodes, 1],
-            t_next
+        w_elem = w_nodes[cells]
+        div_w = (
+            w_elem[:, 0, 0] * dphi_dx_m[:, 0] + w_elem[:, 1, 0] * dphi_dx_m[:, 1] + w_elem[:, 2, 0] * dphi_dx_m[:, 2] +
+            w_elem[:, 0, 1] * dphi_dy_m[:, 0] + w_elem[:, 1, 1] * dphi_dy_m[:, 1] + w_elem[:, 2, 1] * dphi_dy_m[:, 2]
         )
 
-        rhs_free = rhs_vec[free_nodes] - LHS_global[free_nodes, :][:, bnd_nodes].dot(u_bnd_values)
-        A_free = LHS_global[free_nodes, :][:, free_nodes]
+        # 2. Geometria su t^{n+1}
+        x1_p, y1_p = nodes_next[cells[:, 0], 0], nodes_next[cells[:, 0], 1]
+        x2_p, y2_p = nodes_next[cells[:, 1], 0], nodes_next[cells[:, 1], 1]
+        x3_p, y3_p = nodes_next[cells[:, 2], 0], nodes_next[cells[:, 2], 1]
 
-        # 8. Risoluzione sistema lineare ridotto
-        u_free = spla.spsolve(A_free, rhs_free)
+        det_J_p = (x2_p - x1_p) * (y3_p - y1_p) - (x3_p - x1_p) * (y2_p - y1_p)
+        areas_next = 0.5 * np.abs(det_J_p)
+        inv_det_p = 1.0 / det_J_p
 
-        # Ricostruzione stato su mesh_t1
-        state_t1 = np.empty(num_nodes, dtype=np.float64)
-        state_t1[free_nodes] = u_free
-        state_t1[bnd_nodes] = u_bnd_values
+        dphi_dx_p = np.column_stack([(y2_p - y3_p) * inv_det_p, (y3_p - y1_p) * inv_det_p, (y1_p - y2_p) * inv_det_p])
+        dphi_dy_p = np.column_stack([(x3_p - x2_p) * inv_det_p, (x1_p - x3_p) * inv_det_p, (x2_p - x1_p) * inv_det_p])
 
-        solve_time = time.perf_counter() - t0
+        # 3. Geometria su t^n
+        x1_n, y1_n = nodes_n[cells[:, 0], 0], nodes_n[cells[:, 0], 1]
+        x2_n, y2_n = nodes_n[cells[:, 1], 0], nodes_n[cells[:, 1], 1]
+        x3_n, y3_n = nodes_n[cells[:, 2], 0], nodes_n[cells[:, 2], 1]
+        areas_n = 0.5 * np.abs((x2_n - x1_n) * (y3_n - y1_n) - (x3_n - x1_n) * (y2_n - y1_n))
 
-        metrics = {
-            "elapsed_time": solve_time,
-            "max_mesh_velocity": float(np.max(np.linalg.norm(w, axis=1))),
-            "mean_mesh_velocity": float(np.mean(np.linalg.norm(w, axis=1))),
-            "gcl_residual": float(gcl_res),
-            "cond_lhs_approx": float(A_free.diagonal().max() / max(A_free.diagonal().min(), 1e-12))
+        # Matrici di massa locali coerenti
+        base_M = np.array([[2.0, 1.0, 1.0], [1.0, 2.0, 1.0], [1.0, 1.0, 2.0]], dtype=np.float64) / 12.0
+        M_elem_next = areas_next[:, None, None] * base_M[None, :, :]
+        M_elem_n = areas_n[:, None, None] * base_M[None, :, :]
+
+        M_next = self.assemble_mass_matrix(mesh_next)
+        M_n = self.assemble_mass_matrix(mesh_n)
+
+        # 4. Operatore di Convezione di Griglia C_{mesh}(w)
+        # Il termine avvettivo debole standard: - int phi_i (w . grad phi_j)
+        qp_ref, qw_ref = _get_triangle_quadrature_degree_5()
+        C_adv = np.zeros((num_cells, 3, 3), dtype=np.float64)
+
+        for (xi, eta), weight in zip(qp_ref, qw_ref):
+            phi = np.array([1.0 - xi - eta, xi, eta], dtype=np.float64)
+            w_q = np.sum(w_elem * phi[None, :, None], axis=1)
+            w_dot_grad = w_q[:, 0, None] * dphi_dx_m + w_q[:, 1, None] * dphi_dy_m
+            term = phi[:, None] * w_dot_grad[:, None, :]
+            C_adv += (2.0 * weight) * (areas_mid[:, None, None] * term)
+
+        # Compensazione D-GCL analitica:
+        # Affinché (M^{n+1} - M^n)/dt @ 1 + C_mesh @ 1 = 0, poiché C_adv @ 1 = 0 identicamente,
+        # la variazione della massa elementare viene bilanciata algebricamente:
+        delta_M_elem = (M_elem_next - M_elem_n) / dt
+        C_mesh_elem = - C_adv - delta_M_elem
+
+        # 5. Convezione fisica e diffusione su t^{n+1}
+        C_phys_elem = np.zeros((num_cells, 3, 3), dtype=np.float64)
+        K_elem = np.zeros((num_cells, 3, 3), dtype=np.float64)
+        F_elem = np.zeros((num_cells, 3), dtype=np.float64)
+
+        if not pure_gcl:
+            for (xi, eta), weight in zip(qp_ref, qw_ref):
+                phi = np.array([1.0 - xi - eta, xi, eta], dtype=np.float64)
+                b_grad = self.b[0] * dphi_dx_p + self.b[1] * dphi_dy_p
+                C_phys_elem += (2.0 * weight) * (areas_next[:, None, None] * (phi[:, None] * b_grad[:, None, :]))
+
+                if self.pde is not None:
+                    xq = phi[0] * x1_p + phi[1] * x2_p + phi[2] * x3_p
+                    yq = phi[0] * y1_p + phi[1] * y2_p + phi[2] * y3_p
+                    _, _, _, _, _, _, f_val = self.pde.evaluate_exact(xq, yq, t_next)
+                    F_elem += (2.0 * weight) * (areas_next[:, None] * f_val[:, None] * phi[None, :])
+
+            if self.nu > 0.0:
+                grad_dot = (dphi_dx_p[:, :, None] * dphi_dx_p[:, None, :] + dphi_dy_p[:, :, None] * dphi_dy_p[:, None, :])
+                K_elem = self.nu * (areas_next[:, None, None] * grad_dot)
+
+        # 6. Assemblaggio matriciale globale: A = (1/dt)*M^{n+1} + C_mesh + C_phys + K
+        rows = np.repeat(cells[:, :, None], 3, axis=2).flatten()
+        cols = np.repeat(cells[:, None, :], 3, axis=1).flatten()
+
+        A_elem = (1.0 / dt) * M_elem_next + C_mesh_elem + C_phys_elem + K_elem
+        A_mat = sp.coo_matrix((A_elem.flatten(), (rows, cols)), shape=(num_nodes, num_nodes)).tocsr()
+
+        F_vec = np.zeros(num_nodes, dtype=np.float64)
+        if not pure_gcl:
+            np.add.at(F_vec, cells[:, 0], F_elem[:, 0])
+            np.add.at(F_vec, cells[:, 1], F_elem[:, 1])
+            np.add.at(F_vec, cells[:, 2], F_elem[:, 2])
+
+        C_mesh_mat = sp.coo_matrix((C_mesh_elem.flatten(), (rows, cols)), shape=(num_nodes, num_nodes)).tocsr()
+        r_elem = np.abs((areas_next - areas_n) / dt - areas_mid * div_w)
+
+        diagnostics = {
+            "max_elem_gcl_residual": float(np.max(r_elem)),
+            "C_mesh_mat": C_mesh_mat
         }
 
-        return state_t1, w, metrics, gcl_res
+        return A_mat, M_n, F_vec, diagnostics
+
+    def step_ale(
+        self,
+        mesh_n: TriangularMesh2D,
+        mesh_next: TriangularMesh2D,
+        u_n: np.ndarray,
+        dt: float,
+        t_next: float,
+        pure_gcl: bool = False
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        A_mat, M_n, F_vec, diag = self.assemble_ale_system(
+            mesh_n, mesh_next, dt, t_next, pure_gcl=pure_gcl
+        )
+
+        # Termine temporale rigorosamente conservativo: (1/dt) * M^n @ u^n + F^{n+1}
+        rhs = (1.0 / dt) * (M_n @ u_n) + F_vec
+        bnd_nodes = mesh_next.boundary_nodes
+
+        if pure_gcl:
+            u_bnd = np.ones(len(bnd_nodes), dtype=np.float64)
+        else:
+            u_bnd = self.pde.evaluate_solution(
+                mesh_next.nodes[bnd_nodes, 0],
+                mesh_next.nodes[bnd_nodes, 1],
+                t_next
+            )
+
+        # Condizioni di Dirichlet
+        rhs = rhs - A_mat[:, bnd_nodes] @ u_bnd
+        rhs[bnd_nodes] = u_bnd
+
+        A_mod = A_mat.tolil()
+        A_mod[bnd_nodes, :] = 0.0
+        A_mod[:, bnd_nodes] = 0.0
+        A_mod[bnd_nodes, bnd_nodes] = 1.0
+        A_mod = A_mod.tocsr()
+
+        u_next = spla.spsolve(A_mod, rhs)
+        return u_next, diag

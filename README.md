@@ -260,6 +260,25 @@ python experiments/stage_b_final_ablations.py
 
 I dati strutturati vengono esportati in `results/stage_b/ablations/stage_b_final_ablations.json`.
 
+### 5.3. Aggiornamento della Guida all'Uso (Script Stage C)
+Per eseguire in sequenza le verifiche ALE e la campagna dinamica finale:
+
+```bash
+# 1. Verifica consistenza cinematica e conservazione Discrete GCL (C1, C2)
+pytest tests/test_ale_gcl.py -s -v
+
+# 2. Verifica convergenza spaziale h e temporale dt per schema ALE (C3, C4, C5)
+pytest tests/test_ale_convergence.py -s -v
+
+# 3. Benchmark diagnostico a parità di target GNN: L2-Remap vs ALE (C6)
+python tests/test_ale_replay_stage_b.py
+
+# 4. Campagna sperimentale conclusiva Stage C (C0 Fixed, C1 Remap, C2 ALE, C3 Oracle)
+python experiments/stage_c_campaign.py
+```
+
+Le figure scientifiche e le tabelle vengono esportate in `results/stage_c/figures/` e `results/stage_c/tables/table_stage_c_summary.tex`.
+
 ---
 
 ## 6. Risultati Sperimentali e Validazione Scientifica (Stage A)
@@ -447,7 +466,70 @@ All'aumentare della frequenza di deformazione l'errore temporale integrato cala 
 
 ---
 
-## 8. Roadmap di Sviluppo e Prospettive Future
+## 8. Formulazione ALE e Benchmark Dinamico Finale (Stage C)
+
+Nello **Stage C**, il framework supera il vincolo architetturale del remapping di stato istantaneo introducendo una formulazione differenziale continua **Arbitrary Lagrangian-Eulerian (ALE)** con rispetto rigoroso della **Discrete Geometric Conservation Law (D-GCL)**.
+
+L'equazione di convezione-diffusione sul dominio a geometria variabile $\Omega(t)$ assume la forma:
+$$\left. \frac{\partial u}{\partial t} \right\vert{}_{\boldsymbol{\chi}} + (\mathbf{b} - \mathbf{w}) \cdot \nabla u - \nu \nabla^2 u = f$$
+dove la velocità nodale di griglia continua $\mathbf{w} = \frac{\mathbf{x}^{n+1} - \mathbf{x}^n}{\Delta t}$ viene calcolata linearizzando lo spostamento target predetto dalla GNN lungo la finestra di adattamento temporale $N_a$:
+$$\mathbf{w} = \frac{X_{\mathrm{target}} - X_n}{N_a \Delta t}, \quad X(t_k) = X_n + \frac{k}{N_a} (X_{\mathrm{target}} - X_n)$$
+
+La variazione metrica tra le configurazioni discreta temporale BDF1 impone:
+$$\frac{1}{\Delta t} \left( M^{n+1} \mathbf{u}^{n+1} - M^n \mathbf{u}^n \right) + C_{\mathrm{mesh}}(\mathbf{w}) \mathbf{u}^{n+1} + C_{\mathrm{phys}}(\mathbf{b}) \mathbf{u}^{n+1} + \nu K^{n+1} \mathbf{u}^{n+1} = \mathbf{F}^{n+1}$$
+eliminando alla radice la necessità di proiezioni $L^2$ esplicite tra griglie distinte.
+
+---
+
+### 8.1. Suite di Validazione Pre-Benchmark (C1–C5)
+
+Prima di avviare il confronto dinamico, il solutore ALE è stato sottoposto a una serie di verifiche numeriche indipendenti dalla rete neurale:
+
+* **C1 (Cinematica di Mesh):** Errore relativo $L^2$ sulla velocità di griglia rispetto al campo analitico $\leq 1.64 \times 10^{-4}$ ($L^\infty \leq 3.97 \times 10^{-5}$).
+* **C2 (Discrete GCL & Free-Stream Preservation):** Verifica della conservazione identica di una soluzione uniforme $u(\mathbf{x}, t) \equiv 1$ in assenza di forzante fisico su $100$ time-step consecutivi con maglia in continua deformazione:
+  $$\text{Residuo Geometrico Elementare } R_e \leq 4.34 \times 10^{-17}, \quad \max_{t} \Vert{}u_h(t) - 1\Vert{}_\infty = \mathbf{2.81 \times 10^{-14}}$$
+  La Discrete Geometric Conservation Law è soddisfatta al limite della precisione di macchina.
+* **C3 (ALE One-Step MMS):** Coerenza con la soluzione manufatta a singolo step; scarto rispetto alla mesh fissa inferiore allo $0.15\%$ ($4.001\%$ Fixed vs $4.150\%$ ALE).
+* **C4 (Convergenza Spaziale su Maglia Deformata):** Ordine di convergenza spaziale asintotico su elementi deformati:
+  $$p(H^1) \to \mathbf{0.98} \approx \mathcal{O}(h), \quad p(L^2) \to \mathbf{1.97} \approx \mathcal{O}(h^2)$$
+* **C5 (Convergenza Temporale ALE):** Ordine di convergenza temporale verificato via Cauchy Self-Convergence:
+  $$p(\Delta t) \to \mathbf{0.98} \approx \mathcal{O}(\Delta t)$$
+
+---
+
+### 8.2. Benchmark Comparativo Multimodello dello Stage C
+
+Il benchmark dinamico conclusivo confronta su $100$ time-step ($T = 0.5\text{ s}, \Delta t = 0.005\text{ s}$) quattro configurazioni su griglia $32 \times 32$ ($1089$ nodi, $2048$ elementi):
+
+1. **C0 (Fixed Eulerian FEM):** Riferimento standard stazionario privo di adattamento.
+2. **C1 (GDM w/ $L^2$-Remap):** Pipeline nominale di Stage B (adattamento a scatti + proiezione variazionale continua $L^2$).
+3. **C2 (GDM w/ ALE D-GCL):** Metodo continuo proposto (GNN runtime + Safety Filter + Formulazione ALE conservativa).
+4. **C3 (Oracle w/ ALE D-GCL):** Ottimizzatore variazionale offline continuo (upper bound computazionale).
+
+| Configurazione | Formulazione Dinamica | Errore $L^2(T)$ Finale | Errore $L^2$ Time-Int. | $\min_{t,e} J_e$ | Tempo FEM [s] | Tempo Remap [s] | Tempo Totale [s] | Speedup vs Oracle |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **C0 (Fixed Mesh)** | Euleriana Fissa | $9.03\%$ | $7.96\%$ | $9.77 \times 10^{-4}$ | $1.08$ | $0.00$ | **$1.08$** | $74.0\times$ |
+| **C1 (GDM w/ $L^2$-Remap)** | Riadattamento a Salti | **$8.99\%$** | **$7.89\%$** | $6.59 \times 10^{-4}$ | $1.16$ | $3.53$ | **$5.25$** | $15.2\times$ |
+| **C2 (GDM w/ ALE, Proposto)** | Moto Continuo ALE | $9.47\%$ | $8.27\%$ | $6.59 \times 10^{-4}$ | $1.76$ | **$0.00$** | **$1.97$** | $\mathbf{40.6\times}$ |
+| **C3 (Oracle w/ ALE)** | Moto Continuo ALE | $9.62\%$ | $8.41\%$ | $2.69 \times 10^{-4}$ | $1.77$ | **$0.00$** | **$79.95$** | $1.0\times$ *(Ref)* |
+
+### Evidenze del Benchmark Finale
+
+1. **Abbattimento dei Tempi di Calcolo (Speedup Computazionale):**
+   * **Niente più remapping:** Nello Stage B, calcolare la proiezione $L^2$ per trasferire la soluzione tra mesh diverse richiedeva ben $3.53\text{ s}$ su $5.25\text{ s}$ totali. Nella formulazione ALE questo costo si annulla completamente ($0.00\text{ s}$) perché la griglia si muove in modo continuo insieme al solutore.
+   * **Simulazione più veloce:** Il tempo complessivo scende a soli **$1.97\text{ s}$**, garantendo uno speedup di **$2.66\times$** rispetto allo Stage B ($5.25\text{ s}$) e di **$40.6\times$** rispetto all'Oracolo variazionale ($79.95\text{ s}$).
+
+2. **Confronto sull'Accuratezza della PDE (Trade-off Qualità/Tempo):**
+   * **Stage B ($8.99\%$ L2 finale):** La mesh viene deformata istantaneamente nella forma ottimale all'inizio dell'intervallo e rimane perfettamente ferma e addensata sul picco per tutti i 10 passi successivi. Questo massimizza la precisione locale, ma al prezzo di un remapping molto costoso a ogni evento.
+   * **Stage C con ALE ($9.47\%$ L2 finale):** La mesh si muove con continuità a velocità $\mathbf{w}$. Raggiunge la concentrazione ideale solo gradualmente verso la fine dell'intervallo e subisce il trasporto relativo $(\mathbf{b} - \mathbf{w})$. L'accuratezza rimane comunque comparabile a quella della mesh fissa ($9.03\%$) ed elimina ogni "salto" artificiale o discontinuità nei dati della simulazione.
+
+3. **Stabilità Geometrica Assoluta:**
+   * Anche durante la deformazione continua a ogni singolo istante di tempo, il Safety Filter analitico impedisce che le celle si invertano o si deformino eccessivamente.
+   * Il determinante Jacobiano minimo si mantiene sempre su valori ammissibili ($\min_{t,e} J_e = 6.59 \times 10^{-4} > \epsilon$) con **0 elementi degeneri**, garantendo piena robustezza numerica lungo tutta la simulazione.
+
+---
+
+## 9. Roadmap di Sviluppo e Prospettive Future
 
 Il progetto segue una pianificazione incrementale a tappe per disaccoppiare e controllare rigorosamente le sorgenti di errore numerico:
 
@@ -464,13 +546,20 @@ Il progetto segue una pianificazione incrementale a tappe per disaccoppiare e co
   - Implementazione e validazione dell'operatore di remapping a **$L^2$-Projection continua**, con abbattimento dell'errore di trasferimento di oltre $14.5\times$ e conservazione globale della massa.
   - Chiusura della campagna dinamica: validazione dell'indipendenza dal gradiente esatto ($\Delta \approx 0.01\%$), quantificazione del trade-off frequenza/accuratezza e conseguimento di un'accelerazione di **$15.2\times$** sull'Oracolo variazionale.
 
-- [ ] **Stage C (Benchmark Fluidodinamico e Problemi Ingegneristici Non Lineari):**
-  - Estensione a equazioni di Navier-Stokes incomprimibili 2D per il tracciamento di strati limite e scie vorticose (vortex shedding).
-  - Valutazione dell'inferenza real-time su flussi transitori complessi e scaling su architetture eterogenee GPU/Edge.
+- [x] **Stage C (Formulazione Continua ALE e Rispetto Rigoroso della D-GCL):**
+  - Implementazione della formulazione differenziale Arbitrary Lagrangian-Eulerian (ALE) con velocità continua **w**.
+  - Rispetto rigoroso della Discrete Geometric Conservation Law (D-GCL), con conservazione esatta di soluzioni costanti ($u=1$) al limite macchina ($<10^−13$).
+  - Verifica degli ordini asintotici di convergenza spazio-temporale $O(h^2)$, $O(h)$ e $O(\Delta t)$.
+  - Azzeramento del tempo di remapping computazionale, conseguendo uno speedup di $2.66×$ sullo Stage B e di $40.6×$ sull'Oracolo variazionale.
+
+- [ ] **Prospettive Future (Fluidodinamica Non Lineare e Flussi Complessi):**
+  - Estensione dell'architettura GDM ad equazioni di Navier-Stokes incomprimibili 2D per il tracciamento di strati limite e scie vorticose (vortex shedding).
+  - Formulazione di un oracolo fluidodinamico unificato con loss basata su residuo di conservazione della quantità di moto.
+  - Scaling su mesh tridimensionali poliedriche/tetraedriche e implementazione GPU distribuita per flussi turbolenti.
 
 ---
 
-## 9. Licenza e Citazione
+## 10. Licenza e Citazione
 
 Il codice sorgente e la documentazione di questo repository sono distribuiti sotto licenza libera **MIT**. Consultare il file [`LICENSE`](LICENSE) per i termini completi di utilizzo e ridistribuzione.
 
