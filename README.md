@@ -471,12 +471,18 @@ All'aumentare della frequenza di deformazione l'errore temporale integrato cala 
 Nello **Stage C**, il framework supera il vincolo architetturale del remapping di stato istantaneo introducendo una formulazione differenziale continua **Arbitrary Lagrangian-Eulerian (ALE)** con rispetto rigoroso della **Discrete Geometric Conservation Law (D-GCL)**.
 
 L'equazione di convezione-diffusione sul dominio a geometria variabile $\Omega(t)$ assume la forma:
+
 $$\left. \frac{\partial u}{\partial t} \right\vert{}_{\boldsymbol{\chi}} + (\mathbf{b} - \mathbf{w}) \cdot \nabla u - \nu \nabla^2 u = f$$
+
 dove la velocità nodale di griglia continua $\mathbf{w} = \frac{\mathbf{x}^{n+1} - \mathbf{x}^n}{\Delta t}$ viene calcolata linearizzando lo spostamento target predetto dalla GNN lungo la finestra di adattamento temporale $N_a$:
+
 $$\mathbf{w} = \frac{X_{\mathrm{target}} - X_n}{N_a \Delta t}, \quad X(t_k) = X_n + \frac{k}{N_a} (X_{\mathrm{target}} - X_n)$$
 
+
 La variazione metrica tra le configurazioni discreta temporale BDF1 impone:
+
 $$\frac{1}{\Delta t} \left( M^{n+1} \mathbf{u}^{n+1} - M^n \mathbf{u}^n \right) + C_{\mathrm{mesh}}(\mathbf{w}) \mathbf{u}^{n+1} + C_{\mathrm{phys}}(\mathbf{b}) \mathbf{u}^{n+1} + \nu K^{n+1} \mathbf{u}^{n+1} = \mathbf{F}^{n+1}$$
+
 eliminando alla radice la necessità di proiezioni $L^2$ esplicite tra griglie distinte.
 
 ---
@@ -487,7 +493,9 @@ Prima di avviare il confronto dinamico, il solutore ALE è stato sottoposto a un
 
 * **C1 (Cinematica di Mesh):** Errore relativo $L^2$ sulla velocità di griglia rispetto al campo analitico $\leq 1.64 \times 10^{-4}$ ($L^\infty \leq 3.97 \times 10^{-5}$).
 * **C2 (Discrete GCL & Free-Stream Preservation):** Verifica della conservazione identica di una soluzione uniforme $u(\mathbf{x}, t) \equiv 1$ in assenza di forzante fisico su $100$ time-step consecutivi con maglia in continua deformazione:
+
   $$\text{Residuo Geometrico Elementare } R_e \leq 4.34 \times 10^{-17}, \quad \max_{t} \Vert{}u_h(t) - 1\Vert{}_\infty = \mathbf{2.81 \times 10^{-14}}$$
+
   La Discrete Geometric Conservation Law è soddisfatta al limite della precisione di macchina.
 * **C3 (ALE One-Step MMS):** Coerenza con la soluzione manufatta a singolo step; scarto rispetto alla mesh fissa inferiore allo $0.15\%$ ($4.001\%$ Fixed vs $4.150\%$ ALE).
 * **C4 (Convergenza Spaziale su Maglia Deformata):** Ordine di convergenza spaziale asintotico su elementi deformati:
