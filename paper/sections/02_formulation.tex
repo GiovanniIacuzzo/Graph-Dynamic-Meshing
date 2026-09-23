@@ -1,17 +1,420 @@
-
-\subsection{Governing PDE: Transient Convection-Diffusion}
+\subsection{PDE di riferimento: convezione--diffusione instazionaria}
 \label{subsec:pde_governing}
-% Equazione di convezione-diffusione instazionaria 2D su Omega x (0, T].
-% Condizioni al contorno di Dirichlet e condizioni iniziali.
-% Formulazione MMS (Manufactured Solutions) per verifica esatta analitica.
 
-\subsection{\texorpdfstring{Standard $P_1$ Finite Element Discretization}{Standard P1 Finite Element Discretization}}
+Per studiare in modo controllato l'interazione tra adattività della mesh, discretizzazione agli elementi finiti e movimento della griglia, consideriamo come problema di riferimento una PDE scalare bidimensionale di convezione--diffusione instazionaria. La scelta di un modello lineare consente di isolare gli effetti introdotti dalla geometria mobile senza introdurre, nel benchmark principale, ulteriori fonti di errore associate alla linearizzazione o alla soluzione di sistemi non lineari.
+
+Sia
+\[
+\Omega \subset \mathbb{R}^2
+\]
+un dominio limitato e sia $T>0$ l'istante finale della simulazione. Il problema continuo è definito su $\Omega\times(0,T]$ come
+\begin{equation}
+\frac{\partial u}{\partial t}
++
+\mathbf{b}\cdot\nabla u
+-
+\nu \Delta u
+=
+f
+\qquad
+\text{in } \Omega\times(0,T],
+\label{eq:governing_pde}
+\end{equation}
+dove $u(\mathbf{x},t)$ rappresenta il campo scalare incognito, $\mathbf{b}(\mathbf{x},t)\in\mathbb{R}^2$ è il campo di velocità convettiva, $\nu>0$ è il coefficiente di diffusione e $f(\mathbf{x},t)$ è un termine sorgente assegnato.
+
+Nel benchmark considerato il dominio è il quadrato unitario
+\[
+\Omega=[0,1]^2,
+\]
+la velocità convettiva è costante,
+\[
+\mathbf{b}=
+\begin{bmatrix}
+0.4\\
+0.2
+\end{bmatrix},
+\]
+il coefficiente diffusivo è
+\[
+\nu=10^{-3},
+\]
+e l'intervallo temporale è
+\[
+0<t\leq T,
+\qquad
+T=0.5.
+\]
+
+Per semplicità, si considera una condizione di Dirichlet sull'intero bordo:
+\begin{equation}
+u(\mathbf{x},t)=g(\mathbf{x},t)
+\qquad
+\text{su } \partial\Omega\times(0,T],
+\label{eq:dirichlet_bc}
+\end{equation}
+associata alla condizione iniziale
+\begin{equation}
+u(\mathbf{x},0)=u_0(\mathbf{x})
+\qquad
+\text{in } \Omega.
+\label{eq:initial_condition}
+\end{equation}
+
+\paragraph{Manufactured Solution.}
+
+Al fine di separare la verifica del metodo numerico dalla disponibilità di una soluzione di riferimento, il problema viene costruito mediante il \textit{Method of Manufactured Solutions} (MMS). Tale metodologia consiste nel prescrivere una soluzione analitica sufficientemente regolare e nel determinare il termine sorgente affinché tale funzione soddisfi esattamente l'equazione differenziale \citep{farrell2011automated}.
+
+Nel presente lavoro adottiamo la soluzione costruita
+\begin{equation}
+\begin{aligned}
+u^\star(x,y,t) ={}& \exp\left( -\frac{(x-c_x(t))^2 + (y-c_y(t))^2}{2\sigma^2} \right) \\
+& \times \sin(\pi x) \sin(\pi y) \exp(-\beta t),
+\end{aligned}
+\label{eq:manufactured_solution}
+\end{equation}
+dove la posizione del massimo della struttura localizzata evolve secondo
+\begin{equation}
+c_x(t)=0.3+0.4\frac{t}{T},
+\qquad
+c_y(t)=0.35+0.3\frac{t}{T},
+\label{eq:center_motion}
+\end{equation}
+mentre i parametri utilizzati nel benchmark sono
+\begin{equation}
+\sigma=0.06,
+\qquad
+\beta=0.5.
+\label{eq:mms_parameters}
+\end{equation}
+
+La soluzione presenta quindi una struttura spazialmente localizzata, soggetta contemporaneamente a traslazione e decadimento temporale. Tale caratteristica la rende adatta allo studio dell'adattività di tipo $r$, poiché la regione in cui è richiesta maggiore risoluzione varia nel tempo senza modificare la topologia del dominio.
+
+Il termine sorgente viene definito imponendo che $u^\star$ soddisfi esattamente \eqref{eq:governing_pde}, ossia
+\begin{equation}
+f(x,y,t)
+=
+\frac{\partial u^\star}{\partial t}
++
+\mathbf{b}\cdot\nabla u^\star
+-
+\nu\Delta u^\star.
+\label{eq:mms_forcing}
+\end{equation}
+Le condizioni al contorno e iniziale vengono analogamente ricavate dalla soluzione costruita:
+\begin{equation}
+g(\mathbf{x},t)
+=
+u^\star(\mathbf{x},t)
+\big|_{\partial\Omega},
+\qquad
+u_0(\mathbf{x})
+=
+u^\star(\mathbf{x},0).
+\label{eq:mms_bc_ic}
+\end{equation}
+
+In questo modo, a livello continuo, la soluzione esatta del problema è nota in ogni punto del dominio e a ogni istante temporale. Le quantità $L^2$ e $H^1$ calcolate rispetto a $u^\star$ possono pertanto essere utilizzate per quantificare direttamente l'errore di discretizzazione e verificare gli ordini di convergenza dello schema numerico.
+
+\subsection{\texorpdfstring{Discretizzazione ad Elementi Finiti $P_1$}{Discretizzazione ad Elementi Finiti P1}}
+
 \label{subsec:fem_discretization}
-% Forma debole spaziale con elementi finiti lineari su triangoli.
-% Discretizzazione temporale BDF1 (Backward Euler).
-% Proprietà asintotiche attese di convergenza: O(h^2) in L2, O(h) in H1, O(dt) nel tempo.
 
-\subsection{\texorpdfstring{Variational $r$-Adaptation and Oracle Formulation}{Variational r-Adaptation and Oracle Formulation}}
+La discretizzazione spaziale del problema viene ottenuta mediante il metodo di Galerkin agli elementi finiti, utilizzando elementi triangolari lineari $P_1$. La teoria classica dei metodi di Galerkin per problemi parabolici fornisce il quadro matematico di riferimento per l'analisi della discretizzazione spazio-temporale adottata \citep{quarteroni2009the,thome1997galerkin}.
+
+Sia
+\[
+\mathcal{T}_h=\{K_e\}_{e=1}^{M}
+\]
+una triangolazione conforme del dominio $\Omega$, costituita da $M$ elementi triangolari e caratterizzata da una scala spaziale rappresentativa $h$. Definiamo lo spazio degli elementi finiti lineari
+\begin{equation}
+V_h
+=
+\left\{
+v_h\in C^0(\overline{\Omega}) :
+v_h|_{K_e}\in\mathbb{P}_1(K_e),
+\ \forall K_e\in\mathcal{T}_h
+\right\}.
+\label{eq:fem_space}
+\end{equation}
+
+Per semplicità di notazione, assumendo che le condizioni di Dirichlet siano state incorporate nello spazio affine associato al bordo, la formulazione debole del problema consiste nel determinare
+\[
+u_h(t)\in V_h
+\]
+tale che, per ogni funzione test $v_h\in V_h^0$,
+\begin{equation}
+\left(
+\frac{\partial u_h}{\partial t},
+v_h
+\right)_{\Omega}
++
+\left(
+\mathbf{b}\cdot\nabla u_h,
+v_h
+\right)_{\Omega}
++
+\nu
+\left(
+\nabla u_h,\nabla v_h
+\right)_{\Omega}
+=
+\left(
+f,v_h
+\right)_{\Omega},
+\label{eq:weak_form}
+\end{equation}
+dove
+\[
+V_h^0
+=
+\{v_h\in V_h:\ v_h|_{\partial\Omega}=0\}
+\]
+e $(\cdot,\cdot)_\Omega$ denota il prodotto scalare in $L^2(\Omega)$.
+
+Introducendo la base nodale
+\[
+\{\phi_i\}_{i=1}^{N},
+\]
+la soluzione discreta può essere rappresentata nella forma
+\begin{equation}
+u_h(\mathbf{x},t)
+=
+\sum_{j=1}^{N}U_j(t)\phi_j(\mathbf{x}),
+\label{eq:fem_expansion}
+\end{equation}
+dove $U_j(t)$ sono i coefficienti nodali e $N$ è il numero di gradi di libertà.
+
+La discretizzazione spaziale conduce al sistema semidiscreto
+\begin{equation}
+M\dot{\mathbf{U}}(t)
++
+C\mathbf{U}(t)
++
+\nu K\mathbf{U}(t)
+=
+\mathbf{F}(t),
+\label{eq:semidiscrete_system}
+\end{equation}
+dove $M$, $C$ e $K$ rappresentano rispettivamente la matrice di massa, la matrice convettiva e la matrice di diffusione. I relativi coefficienti sono definiti da
+\begin{align}
+M_{ij}
+&=
+\int_{\Omega}\phi_i\phi_j\,d\mathbf{x},
+\label{eq:mass_matrix}
+\\
+C_{ij}
+&=
+\int_{\Omega}
+\phi_i\,
+\mathbf{b}\cdot\nabla\phi_j
+\,d\mathbf{x},
+\label{eq:convection_matrix}
+\\
+K_{ij}
+&=
+\int_{\Omega}
+\nabla\phi_i\cdot\nabla\phi_j
+\,d\mathbf{x},
+\label{eq:stiffness_matrix}
+\\
+F_i(t)
+&=
+\int_{\Omega}f(\mathbf{x},t)\phi_i(\mathbf{x})\,d\mathbf{x}.
+\label{eq:load_vector}
+\end{align}
+
+\paragraph{Discretizzazione temporale.}
+
+L'integrazione temporale viene effettuata mediante Backward Euler, corrispondente al primo schema backward difference (BDF1). Indicando con
+\[
+t_n=n\Delta t,
+\qquad
+n=0,\ldots,N_t,
+\]
+la soluzione discreta al tempo $t_n$ è denotata con $\mathbf{U}^n$. L'approssimazione della derivata temporale è
+\begin{equation}
+\dot{\mathbf{U}}(t_n)
+\approx
+\frac{\mathbf{U}^n-\mathbf{U}^{n-1}}{\Delta t}.
+\label{eq:backward_euler_derivative}
+\end{equation}
+
+Sostituendo \eqref{eq:backward_euler_derivative} nella formulazione semidiscreta si ottiene
+\begin{equation}
+\left(
+\frac{1}{\Delta t}M+C+\nu K
+\right)
+\mathbf{U}^n
+=
+\frac{1}{\Delta t}M\mathbf{U}^{n-1}
++
+\mathbf{F}^n,
+\label{eq:fully_discrete_system}
+\end{equation}
+con
+\[
+\mathbf{F}^n=\mathbf{F}(t_n).
+\]
+
+Le condizioni di Dirichlet vengono imposte al livello temporale $t_n$ modificando opportunamente il sistema algebrico \eqref{eq:fully_discrete_system}. Nel benchmark di riferimento la discretizzazione utilizza quindi esclusivamente elementi $P_1$ standard nello spazio e Backward Euler nel tempo, senza introdurre termini di stabilizzazione aggiuntivi, così da mantenere separati gli effetti della discretizzazione di base da quelli associati all'adattività della mesh.
+
+Per una soluzione sufficientemente regolare e una famiglia di mesh conformi e quasi uniformi, la teoria classica dei metodi Galerkin per problemi parabolici fornisce, per elementi $P_1$, gli ordini spaziali attesi
+\begin{equation}
+\|u-u_h\|_{L^2(\Omega)}
+=
+\mathcal{O}(h^2),
+\qquad
+\|u-u_h\|_{H^1(\Omega)}
+=
+\mathcal{O}(h),
+\label{eq:spatial_convergence}
+\end{equation}
+mentre Backward Euler presenta un errore temporale del primo ordine,
+\begin{equation}
+\|u-u_{\Delta t}\|
+=
+\mathcal{O}(\Delta t).
+\label{eq:temporal_convergence}
+\end{equation}
+Nel seguito tali proprietà vengono verificate numericamente tramite studi indipendenti di raffinamento spaziale e temporale, prima dell'introduzione del moto della mesh. Questo passaggio è necessario per distinguere l'errore intrinseco del solutore FEM dall'errore successivamente introdotto dalla strategia di adattamento.
+
+\subsection{\texorpdfstring{Adattività variazionale $r$ e formulazione dell'oracolo}{Adattività variazionale r e formulazione dell'oracolo}}
+
 \label{subsec:oracle_formulation}
-% Funzionale multiobiettivo continuo: termine di concentrazione gradiente/errore di interpolazione + regolarizzazione di qualità geometrica/distorsione.
-% Problema vincolato di ottimizzazione non lineare (L-BFGS-B con barriera) come Oracle di riferimento upper-bound.
+
+L'adattività di tipo $r$ viene formulata come un problema di rilocazione dei nodi a topologia fissa. Tale impostazione si inserisce nel più ampio quadro dei metodi di mesh adaptation variazionale, nei quali la configurazione della griglia viene determinata come minimizzatrice di un funzionale costruito per concentrare la risoluzione nelle regioni in cui la rappresentazione numerica della soluzione è maggiormente difficoltosa \citep{huang2001variational,huang2003variational,cao2001comparison,budd2009adaptivity}.
+
+Sia
+\[
+\mathbf{X}^{(0)}
+=
+\left[
+\mathbf{x}_1^{(0)},\ldots,\mathbf{x}_N^{(0)}
+\right]^T
+\]
+la configurazione iniziale dei nodi e sia
+\[
+\mathbf{X}
+=
+\left[
+\mathbf{x}_1,\ldots,\mathbf{x}_N
+\right]^T
+\]
+una generica configurazione ottenuta mantenendo invariata la connettività della triangolazione. Il problema di $r$-adaptation consiste quindi nel determinare le nuove coordinate $\mathbf{X}$ senza modificare il numero di nodi o la topologia della mesh.
+
+Nel presente lavoro la configurazione adattata viene ottenuta mediante un funzionale multiobiettivo normalizzato della forma
+\begin{equation}
+\mathcal{J}(\mathbf{X};u)
+=
+\widetilde{E}_{\mathrm{interp}}(\mathbf{X};u)
++
+\lambda_D
+\widetilde{D}(\mathbf{X})
++
+\lambda_Q
+\widetilde{Q}(\mathbf{X}),
+\label{eq:oracle_functional}
+\end{equation}
+in cui ciascun contributo ammette una precisa controparte analitica:
+\begin{align}
+\widetilde{E}_{\mathrm{interp}}(\mathbf{X};u)
+&=
+\frac{1}{E_0}
+\int_\Omega
+\left| u(\mathbf{x}) - \Pi_{\mathbf{X}} u(\mathbf{x}) \right|^2 d\mathbf{x},
+\label{eq:oracle_e_interp}
+\\
+\widetilde{D}(\mathbf{X})
+&=
+\frac{1}{N}
+\left\| \mathbf{X} - \mathbf{X}^{(0)} \right\|_F^2,
+\label{eq:oracle_disp_penalty}
+\\
+\widetilde{Q}(\mathbf{X})
+&=
+\frac{1}{M}
+\sum_{e=1}^{M}
+\left( 1 - \eta_e(\mathbf{X}) \right).
+\label{eq:oracle_quality_penalty}
+\end{align}
+Il primo termine misura l'errore quadratico continuo di interpolazione rispetto al proiettore $P_1$ $\Pi_{\mathbf{X}}$, valutato su ogni elemento tramite quadratura di Gauss esatta e riscalato rispetto all'errore iniziale $E_0$. Il termine cinematico $\widetilde{D}(\mathbf{X})$ penalizza spostamenti nodali globali non strettamente necessari al miglioramento dell'accuratezza, mentre $\widetilde{Q}(\mathbf{X})$ regolarizza la forma degli elementi mediante la metrica algebrica normalizzata di Escobar--Knupp $\eta_e \in (0, 1]$, prevenendo eccessive distorsioni d'aspetto. I parametri di accoppiamento sono fissati a $\lambda_D=10^{-2}$ e $\lambda_Q=10^{-3}$.
+
+L'idea alla base del primo termine è direttamente collegata alla teoria dell'errore di interpolazione utilizzata nei metodi di $r$-adaptation classici. In particolare, la distribuzione ottimale dei nodi è legata alla variazione spaziale della soluzione e all'errore associato alla sua rappresentazione mediante funzioni finite di basso ordine \citep{cao2001comparison,huang2003variational}. Nel nostro contesto, tale principio viene utilizzato per costruire un obiettivo computazionale che fornisca una configurazione geometrica di riferimento rispetto alla quale addestrare successivamente il modello neurale.
+
+La nuova configurazione deve inoltre rispettare i vincoli geometrici imposti dal dominio. Indicando con $\mathcal{B}$ l'insieme degli indici dei nodi appartenenti al bordo, nel benchmark considerato tali nodi vengono mantenuti sulla geometria prescritta:
+\begin{equation}
+\mathbf{x}_i=\mathbf{x}_i^{(0)},
+\qquad
+i\in\mathcal{B}.
+\label{eq:boundary_mesh_constraint}
+\end{equation}
+Per i nodi interni, le coordinate vengono invece lasciate libere di muoversi all'interno del dominio.
+
+Una seconda condizione fondamentale riguarda la validità geometrica degli elementi. Per ciascun triangolo $K_e$, sia
+\[
+J_e(\mathbf{X})
+\]
+il determinante Jacobiano orientato associato alla trasformazione geometrica dell'elemento. Una mesh valida deve soddisfare
+\begin{equation}
+J_e(\mathbf{X})>0,
+\qquad
+e=1,\ldots,M.
+\label{eq:mesh_validity_oracle}
+\end{equation}
+Nel presente lavoro viene inoltre introdotta una soglia positiva di sicurezza
+\[
+\epsilon>0,
+\]
+così da considerare ammissibili soltanto configurazioni per cui
+\begin{equation}
+J_e(\mathbf{X})\geq\epsilon,
+\qquad
+\forall e.
+\label{eq:mesh_safety_constraint}
+\end{equation}
+
+Il problema variazionale ideale può pertanto essere espresso nella forma
+\begin{equation}
+\mathbf{X}^{\star}
+=
+\underset{\mathbf{X}}{\operatorname{arg\,min}}
+\;
+\mathcal{J}(\mathbf{X};u)
+\label{eq:oracle_constrained}
+\end{equation}
+soggetto ai vincoli geometrici \eqref{eq:boundary_mesh_constraint}--\eqref{eq:mesh_safety_constraint}.
+
+È importante sottolineare che $\mathbf{X}^{\star}$ non rappresenta la soluzione ottima della PDE e non costituisce quindi un ``PDE oracle''. Esso rappresenta invece una \textit{configurazione ottimale istantanea della mesh} rispetto al funzionale \eqref{eq:oracle_functional} per un determinato stato $u$. In altre parole, dato un campo numerico o analitico allo specifico istante temporale, l'oracolo determina una configurazione di riferimento che tende a concentrare la risoluzione nelle regioni di maggiore interesse, bilanciando contemporaneamente accuratezza di interpolazione e qualità geometrica.
+
+\paragraph{Risoluzione numerica dell'oracolo.}
+
+Il problema \eqref{eq:oracle_constrained} è non lineare rispetto alle coordinate nodali, poiché sia l'errore di interpolazione sia i termini geometrici dipendono dalla configurazione della mesh. Nella realizzazione computazionale adottata, il problema viene risolto mediante un algoritmo quasi-Newtoniano limitato, nello specifico L-BFGS-B, operando su vincoli di tipo box per le coordinate nodali e includendo nella funzione obiettivo i termini necessari a penalizzare configurazioni geometricamente non ammissibili.
+
+Nel solutore numerico, la condizione sul contorno viene imposta escludendo i gradi di libertà di bordo dalle variabili di ottimizzazione, mentre le coordinate interne sono vincolate al dominio computazionale mediante vincoli box $\mathbf{x}_i \in [0,1]^2$. Il vincolo di non-inversione $J_e \geq \epsilon$ viene gestito integrando una funzione barriera quadratica esterna:
+\begin{equation}
+\mathbf{X}^{\star}
+=
+\underset{\mathbf{X}\in\mathcal{X}_{\mathrm{box}}}{\operatorname{arg\,min}}
+\left[
+\mathcal{J}(\mathbf{X};u)
++
+\mu \sum_{e=1}^{M} \left[ \max\left(0,\, \epsilon - J_e(\mathbf{X})\right) \right]^2
+\right],
+\label{eq:oracle_penalized}
+\end{equation}
+dove $\mu \gg 1$ è un coefficiente di penalizzazione che interviene qualora una configurazione candidata violi la soglia di sicurezza durante le iterazioni del quasi-Newton L-BFGS-B.
+
+Questa distinzione è rilevante: i vincoli $J_e\geq\epsilon$ definiscono la proprietà geometrica desiderata della soluzione del problema, mentre nella nostra implementazione essi non vengono imposti come vincoli non lineari espliciti dal solutore L-BFGS-B. La loro gestione avviene attraverso una formulazione penalizzata e successive verifiche della validità della configurazione ottenuta.
+
+Una volta determinata la configurazione ottimale, il corrispondente campo di spostamento nodale viene definito come
+\begin{equation}
+\Delta\mathbf{X}^{\star}
+=
+\mathbf{X}^{\star}
+-
+\mathbf{X}^{(0)}.
+\label{eq:oracle_displacement}
+\end{equation}
+Il campo vettoriale $\Delta\mathbf{X}^{\star} \in \mathbb{R}^{N \times 2}$ rappresenta lo spostamento ammissibile che massimizza la risoluzione locale nelle regioni a forte gradiente senza alterare la connettività della griglia. Tale quantità costituisce il target supervisionato di riferimento generato offline. 
+
+Nel capitolo seguente verrà formulato il framework Graph Dynamic Meshing (GDM), deputato ad approssimare efficientemente la mappatura tra stato fisico e spostamento $\Delta\mathbf{X}^{\star}$, garantendo contemporaneamente il rispetto incondizionato del vincolo $J_e \geq \epsilon$ a runtime.

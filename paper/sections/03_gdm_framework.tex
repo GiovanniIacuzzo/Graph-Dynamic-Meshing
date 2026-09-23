@@ -1,20 +1,491 @@
-\section{\texorpdfstring{The Graph Dynamic Meshing (GDM) Framework}{The Graph Dynamic Meshing (GDM) Framework}}
-\label{subsec:graph_representation}
-% Mappatura della mesh triangolare come grafo bidirezionale G = (V, E).
-% Feature nodali: coordinate correnti X_i, campo scalare u_i, gradiente calcolato (FEM o analitico).
-% Feature degli archi: vettori di distanza relativa, lunghezze iniziali/correnti.
+Il framework \textit{Graph Dynamic Meshing} (GDM) è concepito come un livello di adattamento geometrico posto tra il solutore FEM e la discretizzazione spaziale. A partire dalla configurazione corrente della mesh e dalle informazioni fisiche disponibili sulla soluzione numerica, il framework predice uno spostamento nodale che modifica la distribuzione dei gradi di libertà mantenendo invariata la connettività della triangolazione.
 
-\subsection{MeshMover GNN Architecture}
+La procedura è composta da due stadi distinti. Nel primo, una rete neurale su grafi (\textit{Graph Neural Network}, GNN) apprende la relazione tra lo stato corrente della simulazione e lo spostamento nodale fornito dall'oracolo variazionale descritto nella Sezione~\ref{subsec:oracle_formulation}. Nel secondo, lo spostamento predetto viene sottoposto a un controllo geometrico deterministico indipendente dalla rete, denominato \textit{Deterministic Safety Filter}, che verifica la validità della configurazione risultante e, quando necessario, contrae globalmente lo spostamento prima della sua applicazione alla mesh.
+
+La separazione tra predizione e certificazione geometrica è un elemento strutturale del framework. La GNN è infatti utilizzata come approssimatore veloce dell'operatore di adattamento, mentre la validità geometrica non viene affidata esclusivamente alla funzione di perdita o alle proprietà statistiche del modello appreso. Questa impostazione si colloca nel solco dei recenti metodi learning-based per mesh movement, ma introduce una distinzione esplicita tra la previsione neurale dello spostamento e la successiva verifica deterministica della configurazione geometrica \citep{song2022m2n,zhang2024towards,rowbottom2024g}.
+
+\subsection{Rappresentazione della mesh come grafo}
+
+\label{subsec:graph_representation}
+
+Sia
+\[
+\mathcal{T}_h=(\mathcal{V},\mathcal{K})
+\]
+una triangolazione bidimensionale del dominio, dove $\mathcal{V}$ denota l'insieme dei nodi e $\mathcal{K}$ l'insieme degli elementi triangolari. La mesh viene rappresentata mediante un grafo diretto
+\begin{equation}
+\mathcal{G}=(\mathcal{V},\mathcal{E}),
+\label{eq:graph_definition}
+\end{equation}
+nel quale ciascun nodo della mesh corrisponde a un vertice del grafo e ciascuna relazione di adiacenza fra due nodi consecutivi di un elemento triangolare viene rappresentata mediante una coppia di archi orientati.
+
+Per ogni coppia di nodi adiacenti $i$ e $j$ vengono quindi introdotti gli archi
+\[
+(i,j)\in\mathcal{E},
+\qquad
+(j,i)\in\mathcal{E}.
+\]
+La bidirezionalità consente al meccanismo di message passing di propagare l'informazione geometrica e fisica in entrambe le direzioni senza modificare la topologia della mesh.
+
+Questa rappresentazione è naturale nel contesto degli elementi finiti non strutturati, poiché la connettività locale della mesh definisce direttamente il vicinato sul quale viene effettuata la propagazione dell'informazione. Le reti su grafi basate su message passing sono infatti progettate per operare su strutture relazionali senza richiedere una parametrizzazione cartesiana regolare dei dati \citep{battaglia2018relational,bronstein2021geometric}.
+
+Sia
+\[
+\mathbf{x}_i=
+\begin{bmatrix}
+x_i\\
+y_i
+\end{bmatrix}
+\]
+la posizione corrente del nodo $i$. Per ogni nodo vengono costruite feature locali contenenti informazioni geometriche e fisiche. Nel benchmark considerato, il vettore iniziale delle feature nodali è della forma
+\begin{equation}
+\mathbf{v}_i
+=
+\left[
+x_i,\,
+y_i,\,
+u_i,\,
+\frac{\partial u_h}{\partial x}(\mathbf{x}_i),\,
+\frac{\partial u_h}{\partial y}(\mathbf{x}_i)
+\right]^T,
+\label{eq:node_features}
+\end{equation}
+dove $u_i=u_h(\mathbf{x}_i)$ è il valore nodale della soluzione FEM e il gradiente viene calcolato a runtime dal solutore numerico oppure, nei corrispondenti esperimenti di verifica, ricavato dalla soluzione analitica quando questa è disponibile.
+
+Le coordinate nodali forniscono l'informazione geometrica assoluta, mentre il valore della soluzione e il relativo gradiente descrivono lo stato fisico locale che guida l'adattamento. In questo modo la rete non deve apprendere una trasformazione puramente geometrica, ma una relazione tra distribuzione spaziale della soluzione e rilocazione dei gradi di libertà.
+
+Anche gli archi sono associati a feature geometriche. Per ogni arco $(i,j)$ consideriamo il vettore relativo
+\begin{equation}
+\mathbf{r}_{ij}
+=
+\mathbf{x}_j-\mathbf{x}_i
+\label{eq:relative_edge_vector}
+\end{equation}
+e la corrispondente distanza
+\begin{equation}
+d_{ij}
+=
+\|\mathbf{r}_{ij}\|_2.
+\label{eq:current_edge_length}
+\end{equation}
+Per mantenere inoltre l'informazione relativa alla configurazione di riferimento, viene considerata la distanza iniziale
+\begin{equation}
+d_{ij}^{(0)}
+=
+\|\mathbf{x}_j^{(0)}-\mathbf{x}_i^{(0)}\|_2.
+\label{eq:initial_edge_length}
+\end{equation}
+
+Il vettore di feature associato all'arco può quindi essere scritto schematicamente come
+\begin{equation}
+\mathbf{e}_{ij}
+=
+\left[
+\mathbf{r}_{ij}^{\,T},\,
+d_{ij},\,
+d_{ij}^{(0)}
+\right]^T.
+\label{eq:edge_features}
+\end{equation}
+
+L'inclusione simultanea della geometria corrente e di quella di riferimento permette di distinguere una deformazione già presente nella configurazione della mesh da una relazione puramente locale tra nodi. Le feature vengono successivamente trasformate mediante encoder dedicati prima dell'ingresso nel blocco di message passing.
+
+\subsection{Architettura della MeshMover GNN}
+
 \label{subsec:gnn_arch}
-% Schema Encode-Process-Decode.
-% Blocchi di Message Passing con LayerNorm e attivazioni SiLU.
-% Imposizione delle condizioni al bordo (mascheramento nodi di Dirichlet sul perimetro).
-% Funzione di loss supervisionata con regolarizzazione geometrica.
+
+L'architettura adottata segue il paradigma generale \textit{Encode--Process--Decode}, nel quale le feature geometriche e fisiche vengono dapprima proiettate in uno spazio latente, successivamente trasformate mediante una sequenza di operazioni di message passing e infine decodificate nel campo di spostamento nodale \citep{battaglia2018relational}.
+
+Indicando con
+\[
+\mathbf{h}_i^{(0)}
+=
+\phi_V^{\mathrm{enc}}(\mathbf{v}_i)
+\]
+e
+\[
+\mathbf{z}_{ij}^{(0)}
+=
+\phi_E^{\mathrm{enc}}(\mathbf{e}_{ij})
+\]
+le rappresentazioni latenti iniziali di nodi e archi, il blocco di processamento aggiorna iterativamente tali rappresentazioni attraverso una sequenza di $L$ strati di message passing.
+
+Per lo strato $\ell$-esimo, l'informazione trasmessa lungo l'arco $(i,j)$ può essere rappresentata schematicamente come
+\begin{equation}
+\mathbf{m}_{ij}^{(\ell)}
+=
+\phi_E^{(\ell)}
+\left(
+\mathbf{h}_i^{(\ell)},
+\mathbf{h}_j^{(\ell)},
+\mathbf{z}_{ij}^{(\ell)}
+\right).
+\label{eq:message_function}
+\end{equation}
+
+Le informazioni provenienti dai nodi adiacenti vengono quindi aggregate mediante un'operazione simmetrica:
+\begin{equation}
+\mathbf{m}_i^{(\ell)}
+=
+\sum_{j\in\mathcal{N}(i)}
+\mathbf{m}_{ji}^{(\ell)},
+\label{eq:message_aggregation}
+\end{equation}
+dove $\mathcal{N}(i)$ denota l'insieme dei vicini del nodo $i$.
+
+L'aggiornamento dello stato latente nodale è dato dalla relazione
+\begin{equation}
+\mathbf{h}_i^{(\ell+1)}
+=
+\phi_V^{(\ell)}
+\left(
+\mathbf{h}_i^{(\ell)},
+\mathbf{m}_i^{(\ell)}
+\right).
+\label{eq:node_update}
+\end{equation}
+
+Analogamente, la rappresentazione degli archi viene aggiornata attraverso
+\begin{equation}
+\mathbf{z}_{ij}^{(\ell+1)}
+=
+\psi_E^{(\ell)}
+\left(
+\mathbf{z}_{ij}^{(\ell)},
+\mathbf{h}_i^{(\ell)},
+\mathbf{h}_j^{(\ell)}
+\right).
+\label{eq:edge_update}
+\end{equation}
+
+I blocchi di processamento utilizzati nel modello sono costituiti da trasformazioni multilayer perceptron (MLP) con attivazioni SiLU e normalizzazione LayerNorm. I collegamenti residui vengono impiegati per favorire la propagazione dell'informazione attraverso la profondità della rete e rendere più stabile l'ottimizzazione. La formulazione esatta dei blocchi non modifica la struttura matematica generale del message passing definita dalle equazioni \eqref{eq:message_function}--\eqref{eq:edge_update}.
+
+Dopo l'ultimo blocco di processamento, il decoder nodale produce lo spostamento bidimensionale predetto:
+\begin{equation}
+\widetilde{\Delta\mathbf{x}}_i
+=
+\phi_V^{\mathrm{dec}}
+\left(
+\mathbf{h}_i^{(L)}
+\right)
+\in\mathbb{R}^{2}.
+\label{eq:gnn_decoder}
+\end{equation}
+
+Lo spostamento nodale finale $\widehat{\Delta\mathbf{x}}_i$ viene ricavato imponendo in modo esatto la condizione cinematica di bordo introdotta nella Sezione~\ref{subsec:oracle_formulation}:
+\begin{equation}
+\widehat{\Delta\mathbf{x}}_i
+=
+\begin{cases}
+\mathbf{0}, & i \in \mathcal{B}, \\
+\widetilde{\Delta\mathbf{x}}_i, & i \notin \mathcal{B}.
+\end{cases}
+\label{eq:boundary_mask}
+\end{equation}
+L'annullamento identico dello spostamento sui vertici $i \in \mathcal{B}$ agisce come vincolo algebrico rigido (hard constraint) a valle del decoder: a differenza di una regolarizzazione penalizzata all'interno della loss, esso impedisce a priori qualunque violazione della geometria del dominio computazionale $\partial\Omega$ durante l'inferenza.
+
+La configurazione candidata predetta dal modello risulta pertanto:
+\begin{equation}
+\widehat{\mathbf{X}}
+=
+\mathbf{X} + \widehat{\Delta\mathbf{X}}.
+\label{eq:predicted_mesh}
+\end{equation}
+
+\paragraph{Apprendimento supervisionato.}
+
+I target per l'addestramento sono costituiti dagli spostamenti
+\[
+\Delta\mathbf{x}_i^\star
+\]
+ottenuti dall'oracolo variazionale definito nella Sezione~\ref{subsec:oracle_formulation}. La rete apprende quindi l'approssimazione
+\begin{equation}
+\widehat{\Delta\mathbf{X}}
+=
+\mathcal{G}_{\theta}
+\left(
+\mathcal{G},
+u_h
+\right)
+\approx
+\Delta\mathbf{X}^{\star}.
+\label{eq:gnn_mapping}
+\end{equation}
+
+La componente principale della funzione di perdita è una perdita supervisionata sugli spostamenti nodali:
+\begin{equation}
+\mathcal{L}_{\mathrm{target}}
+=
+\frac{1}{N_I}
+\sum_{i\notin\mathcal{B}}
+\left\|
+\widehat{\Delta\mathbf{x}}_i
+-
+\Delta\mathbf{x}_i^\star
+\right\|_2^2,
+\label{eq:target_loss}
+\end{equation}
+dove $N_I$ è il numero di nodi interni.
+
+Alla perdita di previsione può essere associato un termine di regolarizzazione geometrica finalizzato a scoraggiare, durante l'addestramento, configurazioni caratterizzate da elementi prossimi alla degenerazione. Indicando con $J_e(\widehat{\mathbf{X}})$ il Jacobiano orientato dell'elemento ottenuto dall'output della rete, introduciamo genericamente
+\begin{equation}
+\mathcal{L}_{\mathrm{geom}}
+=
+\frac{1}{M}
+\sum_{e=1}^{M}
+\left[
+\max
+\left(
+0,\,
+\delta_{\mathrm{rel}}-m_e
+\right)
+\right]^2,
+\label{eq:geometric_loss}
+\end{equation}
+dove $m_e$ rappresenta la misura normalizzata di qualità geometrica utilizzata per l'elemento $e$ e $\delta_{\mathrm{rel}}$ la soglia relativa prescritta.
+
+La funzione di perdita complessiva assume pertanto la forma
+\begin{equation}
+\mathcal{L}
+=
+\lambda_{\mathrm{target}}
+\mathcal{L}_{\mathrm{target}}
++
+\lambda_{\mathrm{geom}}
+\mathcal{L}_{\mathrm{geom}},
+\label{eq:gnn_loss}
+\end{equation}
+con $\lambda_{\mathrm{target}}>0$ e $\lambda_{\mathrm{geom}}\geq0$.
+
+Nel benchmark considerato il termine geometrico viene mantenuto deliberatamente subordinato alla perdita supervisionata e utilizzato come regolarizzazione, non come meccanismo di certificazione. La garanzia geometrica vera e propria viene demandata al filtro deterministico descritto nella sezione successiva. Questa distinzione consente di separare l'effetto statistico della regolarizzazione durante il training dalla verifica analitica della mesh durante l'inferenza.
 
 \subsection{Analytical Deterministic Safety Filter}
+
 \label{subsec:safety_filter}
-% Definizione del determinante Jacobiano orientato dell'elemento J_e = 2 * Area(e).
-% Condizione di ammissibilità: J_e >= epsilon > 0 per ogni cella e.
-% Traiettoria lineare convessa nodale X(alpha) = X_old + alpha * Delta X.
-% Derivazione analitica delle radici polinomiali del secondo ordine per ogni triangolo.
-% Calcolo esatto O(M) del fattore globale di contrazione ammissibile alpha_global in (0, 1].
+
+La previsione dello spostamento mediante una rete neurale non implica, in generale, che la configurazione risultante sia geometricamente ammissibile. In particolare, uno spostamento sufficientemente grande può ridurre l'area orientata di uno o più triangoli fino a provocarne la degenerazione o l'inversione.
+
+Nel framework GDM la validità geometrica non viene quindi affidata esclusivamente alla funzione di perdita. Dopo l'inferenza, lo spostamento predetto viene sottoposto a un \textit{Deterministic Safety Filter} che determina analiticamente il massimo fattore di applicazione compatibile con una soglia geometrica prescritta.
+
+La sola riduzione della funzione di perdita durante l'addestramento non garantisce che la configurazione predetta $\widehat{\mathbf{X}}$ sia ovunque ammissibile: deformazioni ampie o disallineate possono contrarre localmente gli elementi fino a provocarne la degenerazione ($J_e \to 0$) o l'inversione topologica ($J_e < 0$).
+
+Per assicurare a runtime il rispetto incondizionato del vincolo geometrico $J_e \geq \epsilon$ definito nella Sezione~\ref{subsec:oracle_formulation}, il vettore di spostamento predetto $\widehat{\Delta\mathbf{X}}$ viene analizzato a valle dell'inferenza da un \textit{Deterministic Safety Filter}. Tale modulo calcola in forma chiusa il massimo fattore scalare ammissibile $\alpha_{\mathrm{global}} \in [0, 1]$ applicabile alla griglia, garantendo che nessun elemento violi la soglia prescritta $\epsilon$.
+
+\paragraph{Traiettoria lineare dello spostamento.}
+
+Sia
+\[
+\Delta\mathbf{X}
+=
+\left[
+\Delta\mathbf{x}_1,\ldots,
+\Delta\mathbf{x}_N
+\right]^T
+\]
+lo spostamento completo predetto dalla rete. Invece di verificare esclusivamente la configurazione finale, consideriamo la traiettoria lineare
+\begin{equation}
+\mathbf{X}(\alpha)
+=
+\mathbf{X}^{n}
++
+\alpha\Delta\mathbf{X},
+\qquad
+\alpha\in[0,1].
+\label{eq:linear_mesh_trajectory}
+\end{equation}
+
+Il valore $\alpha=0$ corrisponde alla mesh corrente, mentre $\alpha=1$ rappresenta la configurazione interamente predetta dalla rete.
+
+Per un elemento $K_e$, definiamo
+\begin{align}
+\mathbf{r}_{e}^{(0)}
+&=
+\mathbf{x}_b^n-\mathbf{x}_a^n,
+&
+\mathbf{s}_{e}^{(0)}
+&=
+\mathbf{x}_c^n-\mathbf{x}_a^n,
+\\
+\mathbf{r}_{e}^{(1)}
+&=
+\Delta\mathbf{x}_b-\Delta\mathbf{x}_a,
+&
+\mathbf{s}_{e}^{(1)}
+&=
+\Delta\mathbf{x}_c-\Delta\mathbf{x}_a.
+\end{align}
+
+Lungo la traiettoria \eqref{eq:linear_mesh_trajectory} i due vettori di riferimento dell'elemento diventano
+\begin{equation}
+\mathbf{r}_e(\alpha)
+=
+\mathbf{r}_e^{(0)}
++
+\alpha\mathbf{r}_e^{(1)},
+\qquad
+\mathbf{s}_e(\alpha)
+=
+\mathbf{s}_e^{(0)}
++
+\alpha\mathbf{s}_e^{(1)}.
+\label{eq:edge_trajectory}
+\end{equation}
+
+Sostituendo tali espressioni nella definizione del Jacobiano si ottiene
+\begin{equation}
+J_e(\alpha)
+=
+\det
+\left[
+\mathbf{r}_e(\alpha),
+\mathbf{s}_e(\alpha)
+\right].
+\label{eq:jacobian_alpha}
+\end{equation}
+
+Grazie alla bilinearità del determinante, $J_e(\alpha)$ è esattamente un polinomio di secondo grado:
+\begin{equation}
+J_e(\alpha)
+=
+A_e\alpha^2
++
+B_e\alpha
++
+C_e,
+\label{eq:jacobian_quadratic}
+\end{equation}
+dove
+\begin{align}
+A_e
+&=
+\det
+\left[
+\mathbf{r}_e^{(1)},
+\mathbf{s}_e^{(1)}
+\right],
+\label{eq:quadratic_A}
+\\
+B_e
+&=
+\det
+\left[
+\mathbf{r}_e^{(1)},
+\mathbf{s}_e^{(0)}
+\right]
++
+\det
+\left[
+\mathbf{r}_e^{(0)},
+\mathbf{s}_e^{(1)}
+\right],
+\label{eq:quadratic_B}
+\\
+C_e
+&=
+\det
+\left[
+\mathbf{r}_e^{(0)},
+\mathbf{s}_e^{(0)}
+\right]
+=
+J_e(0).
+\label{eq:quadratic_C}
+\end{align}
+
+Questa proprietà costituisce il punto fondamentale del Safety Filter: per elementi triangolari lineari e per una traiettoria nodale lineare, il problema di validità geometrica può essere ricondotto esattamente allo studio di un polinomio scalare di secondo grado.
+
+\paragraph{Determinazione del fattore ammissibile per elemento.}
+
+Per ciascun triangolo $K_e$, imponiamo la condizione di non-violazione $J_e(\alpha) \geq \epsilon$ lungo l'intera traiettoria parametrica:
+\begin{equation}
+q_e(\alpha) \equiv A_e\alpha^2 + B_e\alpha + (C_e - \epsilon) \geq 0,
+\qquad \forall \alpha \in [0, \alpha_e^\star].
+\label{eq:safety_polynomial}
+\end{equation}
+Poiché la configurazione di partenza è ammissibile, si ha $q_e(0) = C_e - \epsilon > 0$. La determinazione analitica di $\alpha_e^\star \in (0, 1]$ procede identificando l'eventuale prima radice reale positiva del polinomio:
+\begin{enumerate}
+    \item \textbf{Regime lineare ($|A_e| < \tau_{\mathrm{deg}}$):} se $B_e < 0$, la funzione decresce monotonicamente intersecando la soglia in $\alpha = -(C_e - \epsilon)/B_e$. Se tale valore ricade in $(0, 1]$, si pone $\alpha_e^\star = -(C_e - \epsilon)/B_e$, altrimenti $\alpha_e^\star = 1$.
+    \item \textbf{Regime quadratico genuino ($|A_e| \geq \tau_{\mathrm{deg}}$):} se il discriminante $\Delta_e = B_e^2 - 4A_e(C_e - \epsilon) \geq 0$, il polinomio ammette due intersezioni reali calcolate tramite la formula numericamente stabile:
+    \begin{equation}
+    \begin{aligned}
+        q_e^\star &= -\frac{1}{2} \left[ B_e + \operatorname{sgn}(B_e)\sqrt{\Delta_e} \right], \\[4pt]
+        r_1 &= \frac{q_e^\star}{A_e}, 
+        \qquad
+        r_2 = \frac{C_e - \epsilon}{q_e^\star}.
+    \end{aligned}
+    \label{eq:stable_roots}
+    \end{equation}
+    evitando fenomeni di cancellazione numerica per $|B_e| \gg |A_e|$. Definito l'insieme delle intersezioni interne $\mathcal{R}_e = \{r \in \{r_1, r_2\} : 0 < r \leq 1\}$, si assegna:
+    \begin{equation}
+    \alpha_e^\star = 
+    \begin{cases}
+    \min(\mathcal{R}_e), & \text{se } \mathcal{R}_e \neq \emptyset, \\
+    1, & \text{altrimenti}.
+    \end{cases}
+    \label{eq:element_safe_alpha}
+    \end{equation}
+\end{enumerate}
+Poiché la verifica richiede un numero finito e costante di operazioni scalari per cella, il costo locale per elemento è strettamente $\mathcal{O}(1)$.
+
+\paragraph{Fattore globale di contrazione.}
+
+Affinché la triangolazione sia globalmente conforme e priva di inversioni, il vincolo deve valere simultaneamente su tutti gli $M$ elementi. Il fattore globale di contrazione viene determinato come:
+\begin{equation}
+\alpha_{\mathrm{global}} = 
+\begin{cases}
+1.0, & \text{se } \displaystyle\min_{e=1,\dots,M} \alpha_e^\star \geq 1.0, \\[8pt]
+(1 - \delta_{\mathrm{margin}}) \displaystyle\min_{e=1,\dots,M} \alpha_e^\star, & \text{altrimenti},
+\end{cases}
+\label{eq:global_alpha}
+\end{equation}
+dove $\delta_{\mathrm{margin}} = 10^{-6}$ introduce un arretramento precauzionale infinitesimo a compensazione di potenziali errori di arrotondamento in aritmetica a precisione doppia.
+
+Lo spostamento nodale finale applicato alla griglia risulta:
+\begin{equation}
+\Delta\mathbf{X}_{\mathrm{safe}} = \alpha_{\mathrm{global}} \widehat{\Delta\mathbf{X}},
+\qquad
+\mathbf{X}^{n+1} = \mathbf{X}^n + \Delta\mathbf{X}_{\mathrm{safe}}.
+\label{eq:safe_displacement}
+\end{equation}
+
+Per costruzione,
+\begin{equation}
+J_e(\alpha)
+\geq\epsilon
+\qquad
+\forall e,\quad
+\forall\alpha\in[0,\alpha_{\mathrm{global}}],
+\label{eq:safety_guarantee}
+\end{equation}
+entro il modello geometrico considerato.
+
+Il Safety Filter richiede una sola scansione degli $M$ elementi e un numero costante di operazioni per ciascun triangolo. La complessità complessiva è quindi
+\begin{equation}
+\mathcal{O}(M),
+\label{eq:safety_complexity}
+\end{equation}
+dove $M$ è il numero di elementi della mesh. Per una famiglia regolare di triangolazioni bidimensionali, $M$ è proporzionale al numero di nodi $N$, rendendo il costo del filtro asintoticamente lineare rispetto alla dimensione della discretizzazione.
+
+\paragraph{Distinzione tra regolarizzazione e certificazione.}
+
+Il ruolo del Safety Filter è distinto da quello del termine geometrico presente nella funzione di perdita \eqref{eq:geometric_loss}. La regolarizzazione viene utilizzata durante l'addestramento per orientare la distribuzione degli output della rete verso configurazioni geometricamente ragionevoli, ma costituisce un vincolo di tipo \textit{soft}. Il Safety Filter, al contrario, opera durante l'inferenza e modifica esplicitamente lo spostamento predetto quando questo non rispetta il margine geometrico richiesto.
+
+La procedura completa può quindi essere schematizzata come
+\begin{equation}
+(\mathcal{G},u_h)
+\xrightarrow{\mathcal{G}_{\theta}}
+\Delta\mathbf{X}
+\xrightarrow{\mathrm{Safety\ Filter}}
+\alpha_{\mathrm{global}}\Delta\mathbf{X}
+\xrightarrow{}
+\mathbf{X}^{n+1}.
+\label{eq:gdm_pipeline}
+\end{equation}
+
+Questa separazione permette di mantenere indipendenti la capacità di approssimazione della rete e il requisito geometrico di validità della mesh. Nel caso in cui la configurazione predetta sia già ammissibile, il filtro è trasparente e restituisce
+\[
+\alpha_{\mathrm{global}}=1.
+\]
+Quando invece una parte dello spostamento conduce alla perdita del margine geometrico prescritto, il fattore viene automaticamente ridotto fino al primo valore ammissibile comune a tutti gli elementi.
+
+La garanzia fornita dal filtro è specifica per il modello geometrico adottato: triangoli lineari, spostamento nodale lineare e soglia $\epsilon$ prescritta. Essa non costituisce una garanzia generale per elementi curvi o di ordine superiore, né per traiettorie di mesh non rappresentabili dalla parametrizzazione lineare \eqref{eq:linear_mesh_trajectory}. Tali estensioni richiederebbero un'analisi distinta della positività del Jacobiano.

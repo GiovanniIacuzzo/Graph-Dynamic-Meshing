@@ -27,6 +27,7 @@
 \usepackage{algorithmic}
 
 % --- Collegamenti Ipertestuali e Riferimenti ---
+\usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
 \usepackage[colorlinks=true,
             linkcolor=blue!70!black,
@@ -67,7 +68,12 @@
 % degradazione da remapping pointwise, instabilità geometrica / inversioni di celle),
 % framework proposto (GDM: GNN + filtro analitico di non-inversione + formulazione ALE D-GCL conforme),
 % principali risultati quantitativi (speedup rispetto a ottimizzatori classici, conservazione massa/GCL, accuratezza PDE).
-\textit{Abstract placeholder: contesto, problema aperto, metodologia proposta (GDM), proprietà teoriche (D-GCL, invariabilità topologica, safety filter), risultati chiave e speedup computazionale.}
+L'adattività geometrica di griglia mediante spostamento nodale a topologia costante ($r$-refinement) rappresenta una metodologia cruciale per catturare gradienti localizzati e fronti mobili nelle discretizzazioni ad elementi finiti (FEM) di equazioni alle derivate parziali (PDE) transienti. Tuttavia, l'applicazione dei metodi classici basati su ottimizzazione variazionale in simulazioni dinamiche instazionarie è fortemente limitata dall'elevato costo computazionale per time-step, dal rischio intrinseco di inversione geometrica degli elementi e dal degrado numerico causato dagli operatori convenzionali di trasferimento di stato (remapping pointwise), i quali introducono dissipazione artificiale e violano la conservazione della massa. 
+
+In questo lavoro introduciamo \textit{Graph Dynamic Meshing} (GDM), un framework ibrido neurale e differenziale per l'adattività dinamica di griglie bidimensionali non strutturate privo di remapping esplicito. Il framework combina: (i) una rete neurale su grafi (GNN) strutturata secondo un paradigma Encode-Process-Decode operante su feature fisiche nodali; (ii) un filtro di sicurezza analitico e deterministico a complessità $\mathcal{O}(M)$, che garantisce incondizionatamente un determinante Jacobiano strettamente positivo ($\min_{t,e} J_e \geq \epsilon$) prevenendo il collasso degli elementi; (iii) una formulazione differenziale continua Arbitrary Lagrangian-Eulerian (ALE) rigorosamente conforme alla Discrete Geometric Conservation Law (D-GCL). 
+
+La validazione numerica, condotta su problemi di convezione-diffusione instazionaria 2D con soluzione manufatta in regime a convezione dominante, dimostra che la formulazione continua proposta soddisfa la D-GCL e preserva campi costanti a precisione di macchina ($\sim 10^{-14}$), azzerando interamente il costo di remapping. Rispetto alle procedure variazionali di riferimento accoppiate ad operatori di proiezione continui, GDM raggiunge un'accuratezza PDE pienamente comparabile con uno speedup computazionale superiore a $40\times$, dimostrando l'efficacia dell'accoppiamento tra reti su grafi, filtraggio geometrico esatto e formulazioni ALE conservative.
+% \textit{Abstract placeholder: contesto, problema aperto, metodologia proposta (GDM), proprietà teoriche (D-GCL, invariabilità topologica, safety filter), risultati chiave e speedup computazionale.}
 \end{abstract}
 
 \vspace{0.5em}
@@ -80,7 +86,6 @@
 \section{Introduction}
 \label{sec:introduction}
 \input{sections/01_introduction.tex}
-\newpage
 
 % =============================================================
 % 2. MODELLO MATEMATICO E METODI NUMERICI
@@ -88,7 +93,6 @@
 \section{Mathematical Formulation and Numerical Discretization}
 \label{sec:formulation}
 \input{sections/02_formulation.tex}
-\newpage
 
 % =============================================================
 % 3. FRAMEWORK GRAPH DYNAMIC MESHING (GDM)
@@ -96,7 +100,6 @@
 \section{The Graph Dynamic Meshing Framework}
 \label{sec:gdm_framework}
 \input{sections/03_gdm_framework.tex}
-\newpage
 
 % =============================================================
 % 4. DALLO STATE TRANSFER AD ALE E D-GCL
@@ -104,7 +107,6 @@
 \section{From State Transfer Operators to ALE Formulation}
 \label{sec:ale_dgcl}
 \input{sections/04_ale_dgcl.tex}
-\newpage
 
 % =============================================================
 % 5. VALIDAZIONE METODOLOGICA E NUMERICA
@@ -112,15 +114,13 @@
 \section{Numerical Verification and Component Diagnostics}
 \label{sec:diagnostics}
 \input{sections/05_diagnostics.tex}
-\newpage
 
 % =============================================================
 % 6. RISULTATI DINAMICI E BENCHMARK COMPARATIVO
 % =============================================================
-\section{Transient Dynamic Benchmark and Comparative Analysis}
+\section{Final Dynamic Benchmark and Comparative Results}
 \label{sec:dynamic_benchmark}
 \input{sections/06_dynamic_benchmark.tex}
-\newpage
 
 % =============================================================
 % 7. DISCUSSIONE E LIMITAZIONI
@@ -148,6 +148,6 @@
 % BIBLIOGRAFIA
 % =============================================================
 \bibliographystyle{unsrtnat}
-% \bibliography{references} % Decommentare quando sarà presente il file references.bib
+\bibliography{references}
 
 \end{document}

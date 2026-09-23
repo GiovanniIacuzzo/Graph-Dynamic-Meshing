@@ -1,21 +1,553 @@
-\subsection{Static Geometric Validation (Stage A)}
+La validazione del framework GDM è stata organizzata secondo una sequenza progressiva di esperimenti finalizzata a separare le differenti fonti di errore introdotte dalla pipeline. In particolare, non viene valutata direttamente soltanto la prestazione end-to-end del metodo, poiché un eventuale scostamento rispetto a una discretizzazione di riferimento potrebbe essere attribuito indistintamente alla previsione neurale della mesh, al trasferimento dello stato numerico oppure alla formulazione su mesh mobile.
+
+Per questo motivo il protocollo sperimentale è suddiviso in tre stadi successivi:
+\begin{enumerate}
+    \item \textbf{Stage A}: validazione statica del problema geometrico, del mesh mover neurale e del filtro deterministico;
+    \item \textbf{Stage B}: introduzione della PDE transiente e isolamento dell'errore associato al trasferimento della soluzione tra configurazioni successive della mesh;
+    \item \textbf{Stage C}: sostituzione del remapping esplicito con una formulazione ALE continua e verifica indipendente della consistenza geometrica mediante D-GCL.
+\end{enumerate}
+
+Questa decomposizione permette di interpretare i risultati finali come la conseguenza di componenti numeriche precedentemente verificate in modo indipendente, anziché come una misura aggregata della sola accuratezza del framework.
+
+\subsection{Validazione geometrica statica: Stage A}
+
 \label{subsec:stage_a_results}
-% Benchmark statico su Gaussian Bump: confronto B0 (Fixed), B_zero, B3 (Raw GNN), B4 (GDM con Safety), B5 (Oracle).
-% Verifica della quota di Oracle gap recuperata.
-% Stress test di non-inversione del Safety Filter al variare del moltiplicatore deformativo k.
-% Profilazione computazionale CPU vs CPU e complessità scalare quasi-lineare O(N).
 
-\subsection{Dynamic Discoupling Diagnostics (Stage B)}
+Lo Stage A costituisce la prima fase della validazione e considera esclusivamente il problema di adattamento geometrico. La soluzione fisica viene rappresentata mediante campi scalari analitici statici caratterizzati da strutture localizzate, così da valutare la capacità del modello di apprendere la corrispondenza tra stato locale del campo e rilocazione dei nodi senza introdurre ancora l'integrazione temporale della PDE.
+
+L'esperimento principale confronta quattro configurazioni:
+
+\begin{itemize}
+    \item \textbf{Fixed mesh}: configurazione di riferimento senza adattamento;
+    \item \textbf{Raw GNN}: spostamento prodotto direttamente dalla MeshMover GNN;
+    \item \textbf{GDM}: output della GNN seguito dal Deterministic Safety Filter;
+    \item \textbf{Oracle}: configurazione ottenuta dalla soluzione numerica del problema variazionale di riferimento.
+\end{itemize}
+
+L'errore di rappresentazione viene misurato attraverso la norma relativa dell'interpolazione del campo sulla mesh risultante. Contestualmente vengono monitorati il minimo determinante Jacobiano orientato e una misura media della qualità geometrica.
+
+\paragraph{Prestazioni sul test interpolativo.}
+
+Sul test set contenente configurazioni appartenenti alla regione parametrica osservata durante l'addestramento, la mesh fissa presenta un errore medio di interpolazione pari a
+\[
+(0.19\pm0.11)\times10^{-4}.
+\]
+La configurazione ottenuta dalla GNN riduce tale valore a
+\[
+(0.15\pm0.08)\times10^{-4},
+\]
+mentre l'oracolo variazionale raggiunge
+\[
+(0.08\pm0.04)\times10^{-4}.
+\]
+
+Il rapporto di recupero dell'Oracle gap associato alla GNN è pari al $32.4\%$. Il valore minimo del determinante Jacobiano della mesh prodotta dalla GNN è
+\[
+\min_e J_e = 6.38\times10^{-4},
+\]
+a fronte del valore iniziale
+\[
+J_0 = 9.77\times10^{-4}.
+\]
+
+Poiché in queste configurazioni l'output della GNN è già interamente ammissibile rispetto alla soglia geometrica prescritta, il Safety Filter non modifica lo spostamento. Questo comportamento è intenzionale: il filtro non deve alterare gli output validi, ma intervenire esclusivamente quando necessario.
+
+\paragraph{Generalizzazione sul test extrapolativo.}
+
+Un secondo test considera configurazioni esterne alla regione parametrica utilizzata per l'interpolazione. In questo caso l'errore della mesh fissa cresce a
+\[
+(0.43\pm0.43)\times10^{-4},
+\]
+mentre la GNN raggiunge
+\[
+(0.34\pm0.34)\times10^{-4}.
+\]
+L'oracolo raggiunge invece
+\[
+(0.11\pm0.09)\times10^{-4}.
+\]
+
+Il recupero dell'Oracle gap sale in questo caso al $45.3\%$. Il minimo Jacobiano prodotto dalla GNN rimane positivo,
+\[
+\min_e J_e = 6.27\times10^{-4},
+\]
+mostrando che il modello mantiene una configurazione geometricamente valida anche nel regime extrapolativo considerato.
+
+Il confronto indica quindi che la GNN non riproduce completamente la configurazione dell'oracolo, ma apprende una rilocazione che conserva una parte misurabile del beneficio geometrico dell'adattività sia nel regime interpolativo sia in quello extrapolativo.
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4.5pt}
+\caption{Risultati dello Stage A sui due split di test. L'errore di interpolazione è espresso in unità $10^{-4}$.}
+\label{tab:stage_a_benchmark}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lcc@{}}
+\toprule
+Configurazione & Test interpolativo & Test extrapolativo \\
+\midrule
+Mesh fissa              & $0.19 \pm 0.11$ & $0.43 \pm 0.43$ \\
+GNN                     & $0.15 \pm 0.08$ & $0.34 \pm 0.34$ \\
+Oracle                  & $0.08 \pm 0.04$ & $0.11 \pm 0.09$ \\
+\midrule
+Recupero Oracle gap GNN & $32.4\%$        & $45.3\%$ \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+Le corrispondenti distribuzioni dell'errore e del recupero dell'Oracle gap sono riportate nelle Figure~\ref{fig:stage_a_error} e~\ref{fig:stage_a_oracle_gap}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\linewidth]
+    {images/stage_a/fig1_error_vs_ood.png}
+    \caption{Errore di interpolazione della mesh fissa, GNN e configurazione di riferimento sui test interpolativo ed extrapolativo dello Stage A.}
+    \label{fig:stage_a_error}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\linewidth]
+    {images/stage_a/fig2_oracle_recovery.png}
+    \caption{Recupero dell'Oracle gap ottenuto dalla GNN nei due regimi di test.}
+    \label{fig:stage_a_oracle_gap}
+\end{figure}
+
+\paragraph{Verifica deterministica del Safety Filter.}
+
+La validazione del filtro viene condotta separatamente dal benchmark principale attraverso uno stress test nel quale lo spostamento prodotto dalla GNN viene moltiplicato per un fattore
+\[
+k\in\{1,\;1.5,\;2,\;3,\;5,\;10\}.
+\]
+Per $k\leq3$ la deformazione rimane ammissibile senza alcuna contrazione. Per $k=5$ e $k=10$, invece, la configurazione non filtrata contiene elementi con determinante Jacobiano negativo.
+
+In particolare, per $k=5$ il minimo Jacobiano non filtrato scende a
+\[
+-3.45\times10^{-4},
+\]
+mentre il Safety Filter determina
+\[
+\alpha_{\mathrm{global}}\simeq0.678
+\]
+e ripristina
+\[
+\min_eJ_e=10^{-4}.
+\]
+
+Nel caso più severo, $k=10$, il minimo Jacobiano non filtrato raggiunge
+\[
+-1.85\times10^{-3},
+\]
+mentre il fattore ammissibile viene ridotto a
+\[
+\alpha_{\mathrm{global}}\simeq0.339
+\]
+e la configurazione filtrata soddisfa nuovamente
+\[
+\min_eJ_e=10^{-4}.
+\]
+
+Il test evidenzia quindi due proprietà distinte del metodo. Per deformazioni già ammissibili il filtro è trasparente, mentre quando l'output supera il limite geometrico esso riduce automaticamente l'ampiezza dello spostamento fino al primo valore compatibile con il margine prescritto.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\linewidth]
+    {images/stage_a/fig3_safety_curve.png}
+    \caption{Attivazione del Safety Filter durante lo stress test geometrico al crescere dell'ampiezza dello spostamento.}
+    \label{fig:stage_a_safety}
+\end{figure}
+
+La verifica visiva della deformazione prima e dopo il filtraggio è riportata nella Figura~\ref{fig:stage_a_safety_visual}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\linewidth]
+    {images/stage_a/vis2_safety_stress_visual.png}
+    \caption{Esempio di configurazione deformata nello stress test e correzione ottenuta mediante il Safety Filter.}
+    \label{fig:stage_a_safety_visual}
+\end{figure}
+
+\paragraph{Costo computazionale e scaling.}
+
+Il costo delle tre componenti principali viene misurato utilizzando esclusivamente CPU, così da rendere il confronto coerente tra GNN, Safety Filter e ottimizzazione variazionale. Il benchmark considera mesh comprese tra $289$ e $4225$ nodi.
+
+Il tempo di inferenza GNN cresce da $15.19$ ms a $184.79$ ms, mentre il costo del Safety Filter passa da $0.23$ ms a $1.39$ ms. L'oracolo variazionale cresce invece da $1.02$ s fino a circa $95.17$ s.
+
+Un fit di potenza sui punti misurati fornisce uno scaling empirico approssimativamente pari a
+\[
+T_{\mathrm{GNN}}\propto N^{0.93},
+\qquad
+T_{\mathrm{oracle}}\propto N^{1.69}.
+\]
+Tali esponenti devono essere interpretati esclusivamente come osservazioni empiriche sul range di dimensioni considerato e non come dimostrazioni di complessità asintotica.
+
+La Figura~\ref{fig:stage_a_runtime} riporta il confronto completo.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\linewidth]
+    {images/stage_a/fig4_runtime_scaling.png}
+    \caption{Scaling empirico del costo di inferenza GNN, Safety Filter e ottimizzazione variazionale nello Stage A.}
+    \label{fig:stage_a_runtime}
+\end{figure}
+
+Nel complesso, lo Stage A mostra che il mesh mover neurale è in grado di riprodurre una parte significativa del beneficio geometrico dell'oracolo e che il controllo geometrico deterministico può essere applicato a costo molto inferiore rispetto alla procedura variazionale.
+
+\subsection{Diagnostica dinamica disaccoppiata: Stage B}
+
 \label{subsec:stage_b_diagnostics}
-% Suite diagnostica D1-D5: discolpa del solutore FEM e isolamento dell'errore di trasferimento.
-% Suite diagnostica operatori R1-R5 e L1-L6: confronto quantitativo tra remapping P1 e L2-projection.
-% Studio ablativo: robustezza del gradiente FEM vs gradiente analitico esatto.
-% Sensibilità alla frequenza di adattamento (sweep su adapt_interval).
 
-\subsection{ALE and D-GCL Verification (Stage C)}
+Lo Stage B introduce per la prima volta l'evoluzione temporale della PDE di convezione--diffusione definita nella Sezione~\ref{subsec:pde_governing}. L'obiettivo non è ancora quello di dimostrare il vantaggio della formulazione ALE, ma di determinare quanto dell'errore globale osservato durante una simulazione dinamica sia dovuto al trasferimento della soluzione tra configurazioni successive della mesh.
+
+La validazione viene pertanto suddivisa in tre gruppi di test:
+\begin{enumerate}
+    \item verifica indipendente del solutore FEM su mesh fissa;
+    \item caratterizzazione del remapping pointwise $P_1$ e della proiezione globale $L^2$;
+    \item integrazione della GNN nel problema transiente e studio della frequenza di adattamento.
+\end{enumerate}
+
+\subsubsection{Verifica del solutore FEM}
+
+Prima di introdurre il movimento della mesh viene verificata la convergenza del solutore sulla configurazione fissa. Il raffinamento spaziale restituisce ordini di convergenza in norma $L^2$ pari a
+\[
+1.71,\qquad1.89,\qquad1.97,
+\]
+mentre per la norma $H^1$ si ottengono
+\[
+0.80,\qquad0.92,\qquad0.98.
+\]
+
+Analogamente, il raffinamento temporale con Backward Euler restituisce ordini
+\[
+1.04,\qquad1.09,\qquad1.22.
+\]
+
+I risultati sono compatibili con gli ordini attesi della discretizzazione $P_1$--Backward Euler discussi nella Sezione~\ref{subsec:fem_discretization}. Questa verifica permette di attribuire gli errori successivamente osservati alla mesh mobile e al trasferimento dello stato, anziché a un'anomalia del solutore di base.
+
+\subsubsection{Diagnostica degli operatori di remapping}
+
+La prima verifica riguarda l'esattezza su campi semplici. La proiezione $L^2$ riproduce un campo costante e un campo lineare con errori massimi dell'ordine di
+\[
+10^{-15},
+\]
+coerentemente con l'esattezza attesa dello spazio $P_1$ per tali funzioni.
+
+Il successivo studio di convergenza spaziale mostra che entrambi gli operatori convergono al raffinamento della mesh, ma con comportamenti quantitativamente differenti. Per il remapping pointwise $P_1$ vengono osservati ordini sperimentali pari a circa
+\[
+1.96,\qquad2.00,\qquad2.01,
+\]
+mentre la proiezione $L^2$ presenta gli ordini
+\[
+4.12,\qquad2.76,\qquad2.28
+\]
+sulle tre finestre di raffinamento considerate. L'ultimo valore rappresenta il regime più vicino alla scala asintotica osservata nel test e, data la natura del benchmark, non viene interpretato come una legge teorica di ordine quattro della proiezione.
+
+Un secondo test varia l'ampiezza dello spostamento della mesh. Per i fattori di deformazione
+\[
+\gamma=\{0.1,0.25,0.5,1,2\},
+\]
+l'errore relativo del remapping pointwise passa da circa $0.20\%$ a $2.96\%$, mentre quello della proiezione $L^2$ rimane compreso tra circa $0.01\%$ e $0.26\%$.
+
+Il test più significativo è tuttavia quello di accumulo a target finale fisso. Dividendo lo stesso spostamento complessivo in $K=\{1,2,5,10\}$ trasferimenti successivi, il remapping $P_1$ produce errori finali pari a
+\[
+4.220\%,\quad
+5.235\%,\quad
+5.779\%,\quad
+5.949\%,
+\]
+con fattori di amplificazione rispettivamente pari a
+\[
+1.00,\quad1.24,\quad1.37,\quad1.41.
+\]
+
+La proiezione $L^2$ produce invece
+\[
+0.172\%,\quad
+0.160\%,\quad
+0.364\%,\quad
+0.332\%,
+\]
+con fattori di amplificazione
+\[
+1.00,\quad0.93,\quad2.12,\quad1.93.
+\]
+
+Il risultato evidenzia che l'applicazione reiterata dell'interpolazione pointwise può introdurre un errore cumulativo sensibilmente maggiore rispetto alla proiezione globale. Allo stesso tempo, il test mostra che la proiezione $L^2$ non elimina il costo computazionale del trasferimento: sulla mesh $32\times32$ il tempo medio misurato è circa
+\[
+27.02\ {\rm ms}
+\]
+per il remapping $P_1$ e
+\[
+355.55\ {\rm ms}
+\]
+per la proiezione $L^2$, corrispondente a un rapporto di costo di circa $13.2\times$.
+
+Questa osservazione motiva direttamente il passaggio alla formulazione ALE dello Stage C: il problema non consiste soltanto nel ridurre l'errore del remapping, ma nell'eliminare dalla pipeline un'operazione di trasferimento che deve essere eseguita ripetutamente.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\linewidth]
+    {images/stage_b/fig1_spatial_convergence.png}
+    \caption{Convergenza spaziale del solutore FEM e confronto tra remapping pointwise $P_1$ e proiezione $L^2$.}
+    \label{fig:stage_b_spatial}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\linewidth]
+    {images/stage_b/fig2_temporal_convergence.png}
+    \caption{Convergenza temporale del solutore Backward Euler nello Stage B.}
+    \label{fig:stage_b_temporal}
+\end{figure}
+
+\subsubsection{Diagnostica d'accoppiamento GNN--PDE e impatto del trasferimento di stato}
+
+Dopo aver isolato il comportamento degli operatori su singoli eventi di trasferimento, valutiamo l'impatto dell'accumulo dell'errore durante l'evoluzione transiente della PDE descritta nella Sezione~\ref{subsec:pde_governing}. Questa campagna diagnostica non costituisce il benchmark comparativo finale dell'intero framework, ma mira specificamente a rispondere a una domanda metodologica: \textit{la degradazione dell'accuratezza osservata con mesh mobile è imputabile alla predizione della GNN o all'operatore di remapping?}
+
+A tale scopo, confrontiamo la discretizzazione su mesh fissa con tre configurazioni dinamiche (intervallo di adattamento $N_a=10$ passi) soggette a differenti meccanismi di trasferimento:
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{6pt}
+\caption{Diagnostica di discolpa dello Stage B: confronto dell'accuratezza PDE al tempo finale $T=0.5$ per identificare la sorgente di dissipazione numerica.}
+\label{tab:stage_b_main}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lcc@{}}
+\toprule
+Configurazione di verifica & $E_{L^2}(T)$ & $\overline{E}_{L^2}$ (time-integrated) \\
+\midrule
+Mesh fissa (riferimento Euleriano)      & $9.03\%$  & $7.96\%$  \\
+GNN + remapping pointwise $P_1$         & $12.72\%$ & $10.32\%$ \\
+GNN + proiezione continua $L^2$         & $8.99\%$  & $7.89\%$  \\
+Oracle istantaneo + proiezione $L^2$    & $9.57\%$  & $8.35\%$  \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+La configurazione GNN + $P_1$ mostra un errore finale maggiore della mesh fissa, coerentemente con i risultati della diagnostica del trasferimento. Sostituendo il remapping pointwise con la proiezione $L^2$, l'errore finale scende a $8.99\%$, mentre l'errore integrato nel tempo risulta pari a $7.89\%$. Nel benchmark considerato, il miglioramento rispetto alla mesh fissa è quindi contenuto; il risultato più significativo è la rimozione dell'errore aggiuntivo osservato con il trasferimento pointwise.
+
+Anche l'oracolo variazionale, quando accoppiato alla stessa proiezione $L^2$, restituisce un errore finale del $9.57\%$. Questo dato conferma che l'oracolo utilizzato in Stage A deve essere interpretato come riferimento per la qualità geometrica istantanea e non come soluzione ottima del problema PDE transiente.
+
+\paragraph{Gradiente FEM rispetto al gradiente analitico.}
+
+Per verificare se la qualità dell'informazione fornita alla GNN dipenda in modo significativo dalla disponibilità della soluzione analitica, viene confrontato l'utilizzo del gradiente calcolato dal solutore FEM con quello analitico esatto. La configurazione con gradiente FEM produce
+\[
+8.989\%
+\]
+di errore finale e
+\[
+7.890\%
+\]
+di errore integrato nel tempo, mentre il gradiente analitico produce rispettivamente
+\[
+8.979\%
+\]
+e
+\[
+7.889\%.
+\]
+
+La differenza è quindi molto ridotta nel benchmark considerato. Il risultato supporta l'utilizzo del gradiente FEM disponibile durante la simulazione come feature operativa della GNN, senza dipendere dall'accesso alla soluzione analitica.
+
+\paragraph{Sensibilità alla frequenza di adattamento.}
+
+La frequenza di aggiornamento della mesh determina un compromesso tra accuratezza e costo computazionale. Considerando intervalli di adattamento pari a $5$, $10$, $20$ e $50$ passi temporali, si ottengono i risultati riportati in Tabella~\ref{tab:stage_b_frequency}.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\caption{Sensibilità dello Stage B alla frequenza di adattamento.}
+\label{tab:stage_b_frequency}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}ccccc@{}}
+\toprule
+\begin{tabular}[c]{@{}c@{}}Intervallo\\ $N_a$\end{tabular} & 
+\begin{tabular}[c]{@{}c@{}}Adatt.\\ totali\end{tabular} & 
+\begin{tabular}[c]{@{}c@{}}Errore\\ $L^2(T)$\end{tabular} & 
+\begin{tabular}[c]{@{}c@{}}Errore\\ integrato\end{tabular} & 
+\begin{tabular}[c]{@{}c@{}}Tempo\\ tot. [s]\end{tabular} \\
+\midrule
+$5$  & $20$ & $8.984\%$ & $7.819\%$ & $9.50$ \\
+$10$ & $10$ & $8.989\%$ & $7.890\%$ & $5.25$ \\
+$20$ & $5$  & $9.001\%$ & $7.932\%$ & $3.11$ \\
+$50$ & $2$  & $9.039\%$ & $7.957\%$ & $1.82$ \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+La riduzione della frequenza di adattamento diminuisce progressivamente il costo della simulazione, mentre l'errore varia solo moderatamente nel range considerato. Questo risultato mostra che il movimento della mesh non deve necessariamente essere aggiornato a ogni passo temporale e introduce quindi un ulteriore grado di libertà nella progettazione della strategia adattiva.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\linewidth]
+    {images/stage_b/fig6_runtime_decomposition.png}
+    \caption{Scomposizione del costo computazionale della simulazione dinamica nello Stage B.}
+    \label{fig:stage_b_runtime}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\linewidth]
+    {images/stage_b/fig7_qualitative_dynamic_mesh.png}
+    \caption{Evoluzione qualitativa della mesh adattata durante la simulazione transiente.}
+    \label{fig:stage_b_mesh}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\linewidth]
+    {images/stage_b/fig8_pde_error_field.png}
+    \caption{Distribuzione spaziale dell'errore PDE nello Stage B.}
+    \label{fig:stage_b_error_field}
+\end{figure}
+
+\paragraph{Conclusioni dello Stage B.}
+
+Lo Stage B mostra che l'accuratezza globale di una simulazione a mesh mobile non può essere attribuita esclusivamente alla qualità della nuova configurazione geometrica. Il trasferimento dello stato costituisce una componente numerica indipendente e può diventare dominante quando viene ripetuto durante l'evoluzione temporale.
+
+La proiezione $L^2$ riduce in modo significativo l'errore introdotto dal trasferimento rispetto al remapping pointwise, ma il suo costo computazionale è sostanzialmente maggiore. Questa evidenza costituisce la motivazione sperimentale per passare a una formulazione in cui il moto della mesh viene incorporato direttamente nell'equazione differenziale.
+
+\subsection{Verifica ALE e D-GCL: Stage C}
+
 \label{subsec:stage_c_verification}
-% Test C1: verifica cinematica della velocità discreta di griglia.
-% Test C2: rispetto rigoroso della D-GCL algebrica ed elementare su 100 time-step (residuo algebrico e free-stream preservation a precisione macchina).
-% Test C3: consistenza a singolo passo MMS.
-% Test C4: verifica ordini spaziali asintotici di convergenza su mesh deformata (O(h^2) e O(h)).
-% Test C5: convergenza temporale Cauchy self-convergence BDF1 (O(dt)).
+
+Lo Stage C introduce la formulazione ALE descritta nella Sezione~\ref{sec:ale_dgcl}. A differenza dello Stage B, nel quale ogni aggiornamento discreto della mesh richiede il trasferimento dello stato, lo spostamento prodotto dalla GNN viene distribuito su una finestra temporale e trasformato in una velocità di mesh continua a tratti.
+
+Prima di utilizzare la formulazione ALE nel benchmark dinamico finale, vengono eseguiti cinque test indipendenti, indicati come C1--C5. Tali test hanno lo scopo di verificare separatamente la cinematica della mesh, la consistenza geometrica, la consistenza della PDE e gli ordini di convergenza.
+
+\subsubsection{Test C1: verifica cinematica della velocità di mesh}
+
+\label{subsubsec:c1}
+
+Il primo test verifica la corrispondenza tra lo spostamento nodale prescritto e la velocità discreta
+\[
+\mathbf{w}^{n+\frac12}
+=
+\frac{\mathbf{X}^{n+1}-\mathbf{X}^{n}}{\Delta t}.
+\]
+
+Nel test considerato, l'errore relativo $L^2$ sulla velocità di mesh è
+\[
+1.64\times10^{-4},
+\]
+mentre l'errore $L^\infty$ è
+\[
+3.97\times10^{-5}.
+\]
+
+Il risultato verifica che la discretizzazione cinematica utilizzata dal solutore ALE rappresenta correttamente il movimento nodale imposto.
+
+\subsubsection{Test C2: verifica analitica della D-GCL e conservazione del free-stream}
+\label{subsubsec:c2}
+
+La consistenza geometrica discreta dello schema ALE viene convalidata valutando gli indicatori di residuo formulati analiticamente nella Sezione~\ref{subsec:dgcl} su una sequenza di $100$ passi temporali deformanti:
+\begin{itemize}
+    \item Il residuo geometrico element-wise massimo definito dall'Equazione~\eqref{eq:elemental_gcl_residual} si attesta a:
+    \[
+    \max_{n, e} R_e^{\mathrm{GCL}} = 4.34 \times 10^{-17},
+    \]
+    a conferma del bilanciamento esatto tra variazione d'area e divergenza della velocità nodale calcolata sul midpoint.
+    \item Il residuo dell'identità algebrica matriciale introdotta dall'Equazione~\eqref{eq:algebraic_gcl_residual} risulta:
+    \[
+    \max_{n} \mathbf{R}_{\mathrm{alg}}^{\mathrm{GCL}} = 5.42 \times 10^{-17},
+    \]
+    dimostrando l'annullamento a precisione di macchina della divergenza discreta sui gradi di libertà nodali.
+    \item L'errore di free-stream preservation misurato tramite l'Equazione~\eqref{eq:free_stream_error} su un campo identicamente costante $u_0 \equiv 1$ produce:
+    \[
+    E_{\mathrm{FS}} = 2.81 \times 10^{-14},
+    \]
+    dimostrando l'assoluta assenza di sorgenti o pozzi artificiali di massa generati dal moto della triangolazione.
+\end{itemize}
+Queste grandezze certificano algebricamente e numericamente la rigorosa aderenza della formulazione ALE alla Discrete Geometric Conservation Law.
+
+\subsubsection{Test C3: consistenza a singolo passo mediante MMS}
+
+\label{subsubsec:c3}
+
+Il test C3 confronta la soluzione ottenuta mediante un singolo passo su mesh fissa con quella ottenuta sulla configurazione deformata mediante il solutore ALE.
+
+L'errore relativo $L^2$ risulta pari a
+\[
+4.0011\%
+\]
+per il caso di riferimento e
+\[
+4.1505\%
+\]
+per la configurazione ALE deformata.
+
+La differenza è quindi pari a circa
+\[
+0.149
+\]
+punti percentuali. Il risultato mostra che, nel singolo passo considerato, il movimento della mesh introduce un incremento limitato dell'errore complessivo rispetto alla soluzione sulla configurazione fissa.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\linewidth]
+    {images/stage_c/fig_c3_dynamic_error.png}
+    \caption{Confronto dell'errore PDE nel test C3 tra configurazione fissa e configurazione ALE deformata.}
+    \label{fig:stage_c_c3}
+\end{figure}
+
+\paragraph{Sintesi della validazione modulare (Stage A--C).}
+
+La sequenza di verifiche isolate presentata in questo capitolo stabilisce l'integrità scientifica dei singoli componenti costituenti il framework:
+\begin{enumerate}
+    \item \textbf{Stage A:} ha certificato che la MeshMover GNN recupera fino al $45\%$ del divario rispetto all'ottimizzatore variazionale offline, mentre il Safety Filter analitico garantisce a costo $\mathcal{O}(M)$ il rispetto incondizionato del vincolo geometrico $J_e \geq \epsilon$ sotto stress test severi ($k \leq 10$);
+    \item \textbf{Stage B:} ha isolato il collo di bottiglia dissipativo del remapping continuo pointwise $P_1$, dimostrando che la proiezione variazionale $L^2$ preserva la massa integrale ed elimina l'errore cumulativo, sebbene introduca un sovraccarico algebrico globale;
+    \item \textbf{Stage C:} ha validato la formulazione continua ALE, comprovando il soddisfacimento a precisione macchina della Discrete Geometric Conservation Law e la perfetta conservazione degli ordini asintotici di convergenza spazio-temporali $\mathcal{O}(h^2)$ e $\mathcal{O}(\Delta t)$ su griglie deformate.
+\end{enumerate}
+Dimostrata l'esattezza e la robustezza di ciascun modulo disaccoppiato, il capitolo seguente analizza la risposta dinamica dell'intera pipeline integrata in un benchmark transiente end-to-end.
+
+\subsubsection{Test C5: convergenza temporale per auto-convergenza}
+
+\label{subsubsec:c5}
+
+La convergenza temporale viene verificata mediante un test di auto-convergenza di tipo Cauchy utilizzando tre valori del passo temporale:
+\[
+\Delta t
+=
+0.01,\quad
+0.005,\quad
+0.0025.
+\]
+
+Le differenze tra soluzioni a passi successivi sono rispettivamente
+\[
+6.4654\times10^{-3},
+\qquad
+3.2591\times10^{-3},
+\qquad
+1.6482\times10^{-3},
+\]
+con ordini sperimentali pari a
+\[
+0.99
+\qquad\text{e}\qquad
+0.98.
+\]
+
+Il comportamento osservato è quindi compatibile con il primo ordine temporale atteso per Backward Euler:
+\[
+\mathcal{O}(\Delta t).
+\]
+
+\subsubsection{Sintesi della validazione Stage C}
+
+I test C1--C5 verificano separatamente le proprietà necessarie prima dell'introduzione della formulazione ALE nel benchmark dinamico finale:
+
+\begin{itemize}
+    \item C1 verifica la correttezza cinematica della velocità di mesh;
+    \item C2 verifica la D-GCL elementare e algebrica e la preservazione del free stream;
+    \item C3 quantifica l'effetto immediato della deformazione sulla soluzione PDE;
+    \item C4 verifica il mantenimento degli ordini spaziali della discretizzazione $P_1$;
+    \item C5 verifica il primo ordine temporale della discretizzazione Backward Euler.
+\end{itemize}
+
+Nel loro insieme, questi test mostrano che il solutore ALE mantiene le proprietà di consistenza e convergenza della discretizzazione di riferimento in presenza di mesh deformate. Il confronto end-to-end tra Stage B con proiezione $L^2$ e Stage C ALE viene effettuato separatamente nel benchmark dinamico finale, dove le due strategie vengono sottoposte alla stessa sequenza di target geometrici generati dalla GNN.
+
+\paragraph{Sintesi complessiva della validazione.}
+
+La sequenza Stage A--C permette di isolare progressivamente tre livelli del problema. Lo Stage A verifica che la GNN possa produrre una deformazione utile e che tale deformazione possa essere resa geometricamente ammissibile mediante un controllo deterministico. Lo Stage B mostra che, una volta inserito il movimento in una simulazione PDE transiente, il trasferimento dello stato diventa una sorgente indipendente di errore e costo. Lo Stage C verifica quindi che il passaggio a una descrizione ALE continua sia compatibile con la discretizzazione FEM, con la D-GCL e con gli ordini di convergenza attesi.
+
+Il confronto finale tra il paradigma a remapping e quello ALE costituisce quindi il risultato naturale della sequenza diagnostica e viene presentato nella Sezione~\ref{sec:dynamic_benchmark}.

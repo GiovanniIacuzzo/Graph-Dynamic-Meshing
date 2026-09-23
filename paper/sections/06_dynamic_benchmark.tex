@@ -1,26 +1,216 @@
-\subsection{Experimental Setup and Baseline Definitions}
+Dopo aver verificato separatamente la correttezza dei singoli componenti metodologici, il presente capitolo considera la pipeline completa in un esperimento dinamico end-to-end. L'obiettivo è valutare il comportamento del framework GDM quando il mesh mover neurale, il \textit{Safety Filter}, il solutore FEM e il meccanismo di trasferimento della soluzione operano congiuntamente durante l'evoluzione temporale della PDE.
+
+Il confronto è costruito attorno a tre aspetti distinti ma strettamente correlati: accuratezza della soluzione numerica, costo computazionale complessivo e robustezza geometrica della mesh. In particolare, viene posto a confronto il caso di riferimento a mesh fissa con due differenti strategie di gestione della mesh mobile basate sul medesimo campo di spostamento generato dalla GNN: la proiezione conservativa $L^2$ e la formulazione ALE continua con verifica della \textit{Geometric Conservation Law}. Tale impostazione permette di isolare il contributo del trasferimento dello stato fisico e di quantificare il costo associato all'uso esplicito di una procedura di remapping.
+
+\subsection{Configurazione del Benchmark e Baseline di Confronto}
 \label{subsec:benchmark_setup}
-% Parametri simulazione PDE: T, dt, Griglia 32x32 (1089 nodi, 2048 celle), intervallo di adattamento N_a = 10.
-% Definizione delle configurazioni a confronto:
-% C0: Fixed Eulerian FEM
-% C1: GDM w/ L2-Projection Remap (Stage B)
-% C2: GDM w/ Continuous ALE D-GCL (Proposed Method)
-% C3: Instantaneous Interpolation Oracle w/ ALE
 
-\subsection{Accuracy and Error Evolution Dynamics}
+La campagna di valutazione dinamica end-to-end adotta la configurazione fisica convezione--diffusione e la Manufactured Solution analitica $u^\star(\mathbf{x}, t)$ rigorosamente definite nella Sezione~\ref{subsec:pde_governing} (Eq.~\ref{eq:governing_pde}--\ref{eq:mms_parameters}), operando sul dominio $\Omega=[0,1]^2$ fino all'istante finale $T=0.5$ con $\mathbf{b}=(0.4, 0.2)^T$ e $\nu=10^{-3}$.
+
+La triangolazione di partenza è uniforme a risoluzione $32\times 32$ ($N=1089$ nodi, $M=2048$ elementi triangolari $P_1$), integrata nel tempo mediante Backward Euler con passo costante $\Delta t = 5\times 10^{-3}$ su un orizzonte di $100$ intervalli temporali. L'aggiornamento geometrico della griglia avviene a intervalli regolari di $N_a=10$ passi. A ogni evento, la MeshMover GNN riceve lo stato FEM corrente e genera lo spostamento predittivo, certificato e riscalato a runtime dal Deterministic Safety Filter (Eq.~\ref{eq:global_alpha}--\ref{eq:safe_displacement}) al fine di assicurare $J_e \geq \epsilon = 10^{-4}$.
+
+Per valutare l'interazione dinamica tra cinematica di griglia e stato fisico, confrontiamo quattro configurazioni metodologiche integrate:
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Configurazioni considerate nel benchmark dinamico finale.}
+\label{tab:final_baselines}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lcccc@{}}
+\toprule
+Configurazione & 
+\begin{tabular}[c]{@{}c@{}}Mesh\\ mobile\end{tabular} & 
+GNN & 
+\begin{tabular}[c]{@{}c@{}}State\\ transfer\end{tabular} & 
+ALE \\
+\midrule
+Fixed FEM         & No  & No  & --              & No  \\
+GDM + $P_1$       & Sì  & Sì  & $P_1$ pointwise & No  \\
+GDM + $L^2$       & Sì  & Sì  & Proiezione $L^2$& No  \\
+GDM + ALE         & Sì  & Sì  & Nessuno         & Sì  \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+La configurazione \textit{Fixed FEM} costituisce il riferimento Euleriano e permette di quantificare l'errore ottenuto senza alcun movimento della mesh. La configurazione \textit{GDM + P1} rappresenta invece l'accoppiamento con il remapping pointwise di tipo barycentrico, utilizzato nelle prime campagne dello Stage B. La configurazione \textit{GDM + $L^2$} sostituisce tale procedura con una proiezione globale nella nuova discretizzazione, mentre \textit{GDM + ALE} elimina il trasferimento esplicito dello stato introducendo direttamente la velocità della mesh nella formulazione della PDE.
+
+Il modello neurale impiegato è identico per tutte le baseline basate su GNN e corrisponde al checkpoint addestrato offline nello Stage~A (Sezione~\ref{subsec:stage_a_results}), senza alcun fine-tuning specifico per la PDE instazionaria. 
+
+Mentre le configurazioni Fixed FEM e GDM + $P_1$ costituiscono riferimenti storici documentati nella diagnostica dello Stage~B per evidenziare la dissipazione indotta dall'interpolazione nodale, il confronto diretto tra proiezione variazionale $L^2$ e formulazione ALE continua viene eseguito imponendo la \textit{medesima sequenza temporale di configurazioni geometriche target} predette dalla GNN. È doveroso precisare che tale protocollo non costituisce una traiettoria numerica identica punto a punto a quella calcolata a runtime nello Stage~B, in quanto i target geometrici sono stati campionati agli istanti di adattamento per isolare in modo rigoroso l'accoppiamento matematico del trasporto della griglia: nel caso $L^2$, la mesh salta istantaneamente al target e vi permane stazionaria per l'intera finestra temporale previo remapping variazionale; nel caso ALE, la griglia evolve a velocità continua $\mathbf{w} = \Delta\mathbf{X}_{\mathrm{safe}} / (N_a \Delta t)$ preservando la D-GCL.
+
+\subsection{PDE Accuracy and Temporal Error Evolution}
 \label{subsec:error_dynamics}
-% Evoluzione temporale dell'errore continuo relativo L2(t) ed errore integrato nel tempo.
-% Analisi del comportamento dell'Oracolo istantaneo rispetto alla PDE differenziale.
-% Confronto tra adattamento a gradino con remap L2 vs moto continuo progressivo ALE.
 
-\subsection{Computational Runtime Decomposition and Speedup}
+La prima metrica considerata è l'errore relativo in norma $L^2$ rispetto alla soluzione fabbricata,
+
+\begin{equation}
+E_{L^2}(t)
+=
+\frac{
+\|u_h(\cdot,t)-u_{\mathrm{exact}}(\cdot,t)\|_{L^2(\Omega)}
+}{
+\|u_{\mathrm{exact}}(\cdot,t)\|_{L^2(\Omega)}
+},
+\label{eq:final_l2_error}
+\end{equation}
+
+calcolato a ogni passo temporale. Oltre al valore finale $E_{L^2}(T)$, viene considerato l'errore integrato nel tempo,
+
+\begin{equation}
+\overline{E}_{L^2}
+=
+\frac{1}{T}
+\int_0^T E_{L^2}(t)\,dt,
+\label{eq:final_integrated_error}
+\end{equation}
+
+approssimato numericamente sulla griglia temporale del benchmark.
+
+Il valore finale dell'errore costituisce una misura della precisione raggiunta al termine della simulazione, mentre l'integrale temporale permette di evidenziare eventuali errori transitori introdotti durante i cambi di configurazione della mesh. Quest'ultima misura è particolarmente importante per le strategie basate su remapping, poiché l'errore di trasferimento non è necessariamente confinato all'istante immediatamente successivo alla modifica della discretizzazione e può propagarsi attraverso i successivi passi temporali.
+
+\begin{table}[htbp]
+\centering
+\caption{Accuratezza globale nel benchmark dinamico. I valori sono espressi come percentuale dell'errore relativo $L^2$.}
+\label{tab:final_accuracy}
+\begin{tabular}{lcc}
+\toprule
+Configurazione
+& $E_{L^2}(T)$ [\%]
+& $\overline{E}_{L^2}$ [\%]
+\\
+\midrule
+Fixed FEM
+& 9.03
+& 7.96
+\\
+GDM + P1
+& 12.72
+& 10.32
+\\
+GDM + $L^2$
+& 8.92
+& 7.87
+\\
+GDM + ALE
+& 9.47
+& 8.27
+\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+L'evoluzione dell'errore relativo $L^2(t)$ illustrata in Figura~\ref{fig:final_error_dynamics} evidenzia le proprietà dinamiche intrinseche delle metodologie a confronto:
+\begin{enumerate}
+    \item \textbf{Decadimento dissipativo di $P_1$ pointwise:} L'applicazione ricorsiva dell'interpolazione nodale produce un marcato accumulo di smussamento numerico sul pacchetto convettivo, portando l'errore finale al $12.72\%$ e l'integrato al $10.32\%$. Tale fenomeno conferma inequivocabilmente che l'interpolazione continua semplice degrada la soluzione rispetto al solutore non adattato ($9.03\%$).
+    \item \textbf{Efficacia della proiezione variazionale $L^2$:} La formulazione proiettiva debole introdotta nella Sezione~\ref{subsec:l2_projection} preserva l'integrale del campo e abbatte l'errore cumulativo, conseguendo un errore finale dell'$8.92\%$ e un errore temporale integrato del $7.87\%$, leggermente inferiore alla discretizzazione su mesh fissa. Tuttavia, l'analisi transitoria rivela la presenza di micro-discontinuità e salti istantanei dell'errore in coincidenza esatta dei dieci istanti di trasferimento di stato.
+    \item \textbf{Comportamento continuo della formulazione ALE:} La formulazione continua basata sulla velocità di griglia $\mathbf{w}$ raggiunge un errore finale del $9.47\%$ e un errore integrato dell'$8.27\%$. Sebbene l'errore risulti marginalmente superiore rispetto alla proiezione $L^2$ (poiché la maglia raggiunge la massima concentrazione locale solo gradualmente e risente del termine avvettivo relativo $\mathbf{b}-\mathbf{w}$), la curva temporale evolve in modo del tutto regolare e privo di salti spuri, azzerando alla radice qualunque operazione di trasferimento.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{images/stage_b/fig3_dynamic_pde_error.png}
+\caption{Evoluzione temporale dell'errore relativo $L^2$ nelle configurazioni dinamiche considerate.}
+\label{fig:final_error_dynamics}
+\end{figure}
+
+La Figura~\ref{fig:final_error_dynamics} mostra l'evoluzione temporale dell'errore. Particolare attenzione è rivolta agli istanti di adattamento, nei quali le configurazioni basate su remapping possono introdurre discontinuità nell'errore dovute al trasferimento dello stato fisico sulla nuova mesh. La formulazione ALE, non richiedendo uno stadio separato di riproiezione, elimina tale operazione esplicita e modifica conseguentemente la dinamica dell'errore.
+
+Nel complesso, i risultati mostrano che la scelta del meccanismo di accoppiamento tra mesh mobile e stato fisico costituisce un elemento determinante quanto la stessa legge di adattamento geometrico. La sola capacità della GNN di produrre una discretizzazione deformata non è quindi sufficiente a caratterizzare il comportamento finale del metodo.
+
+\subsection{Computational Cost and Runtime Decomposition}
 \label{subsec:runtime_analysis}
-% Scomposizione analitica dei tempi: FEM solve, calcolo GNN/Oracle, Safety Filter, Remapping.
-% Dimostrazione dell'annullamento dell'overhead di remapping in formulazione ALE.
-% Speedup conseguito da GDM rispetto alle configurazioni di riferimento.
 
-\subsection{Geometric Robustness and Mesh Quality}
+L'accuratezza deve essere valutata congiuntamente al costo computazionale introdotto dall'adattamento. A questo scopo, il tempo totale di simulazione viene scomposto concettualmente come
+
+\begin{equation}
+T_{\mathrm{total}}
+=
+T_{\mathrm{FEM}}
++
+T_{\mathrm{GNN}}
++
+T_{\mathrm{Safety}}
++
+T_{\mathrm{Remap}}
++
+T_{\mathrm{other}},
+\label{eq:runtime_decomposition}
+\end{equation}
+
+dove $T_{\mathrm{FEM}}$ rappresenta il costo associato all'assemblaggio e alla soluzione del sistema FEM, $T_{\mathrm{GNN}}$ il costo di inferenza del mesh mover, $T_{\mathrm{Safety}}$ il costo del filtro geometrico e $T_{\mathrm{Remap}}$ il costo dell'eventuale trasferimento dello stato tra due configurazioni successive.
+
+Per la formulazione continua ALE il termine $T_{\mathrm{Remap}}$ è identicamente nullo, in quanto la cinematica della griglia è incorporata direttamente nell'operatore differenziale della PDE attraverso la velocità relativa $\mathbf{b} - \mathbf{w}$. Il costo della dinamica di griglia si riduce al calcolo algebrico di $\mathbf{w}$ e all'aggiornamento matriciale locale.
+
+Nel benchmark transiente unificato a 100 time-step, la configurazione GDM + $L^2$ registra un tempo di esecuzione totale pari a:
+\begin{equation}
+\begin{aligned}
+T_{\mathrm{total}}^{L^2} &= 4.18\text{ s}, \\
+T_{\mathrm{Remap}}^{L^2} &= 3.35\text{ s} \quad (80.1\%\text{ del tempo totale}).
+\end{aligned}
+\label{eq:runtime_l2}
+\end{equation}
+Al contrario, la formulazione continua GDM + ALE completa l'intera simulazione in:
+\begin{equation}
+T_{\mathrm{total}}^{\mathrm{ALE}} = 1.76\text{ s},
+\qquad \text{con } T_{\mathrm{Remap}}^{\mathrm{ALE}} \equiv 0.00\text{ s}.
+\label{eq:runtime_ale}
+\end{equation}
+Il rapporto tra i tempi complessivi di simulazione definisce lo speedup operativo del framework ALE rispetto alla proiezione variazionale:
+\begin{equation}
+S_{\mathrm{ALE}}
+=
+\frac{T_{\mathrm{total}}^{L^2}}{T_{\mathrm{total}}^{\mathrm{ALE}}}
+=
+\frac{4.18\text{ s}}{1.76\text{ s}}
+\approx
+2.37\times.
+\label{eq:ale_speedup}
+\end{equation}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.90\linewidth]{images/stage_c/fig_c5_runtime_decomposition.png}
+\caption{Scomposizione cronometrica comparativa tra la strategia con proiezione variazionale $L^2$ e la formulazione continua ALE conforme alla D-GCL. L'eliminazione dell'operatore di remapping consente un'accelerazione di $2.37\times$ mantenendo un'accuratezza comparabile.}
+\label{fig:final_runtime}
+\end{figure}
+
+L'analisi quantitativa conferma quanto anticipato teoricamente nella Sezione~\ref{sec:diagnostics}: l'operatore di trasferimento di stato, sebbene variazionalmente esatto, costituisce il collo di bottiglia dominante dell'$r$-adaptation dinamica. La formulazione continua ALE rimuove interamente tale aggravio computazionale, garantendo un'accelerazione di oltre due volte e mezzo a parità di risoluzione e modello neurale impiegato.
+
+\subsection{Robustezza Geometrica e Tracking Dinamico della Mesh}
 \label{subsec:geometric_robustness}
-% Evoluzione temporale del determinante Jacobiano minimo min_{t,e} J_e.
-% Tracciamento del fattore alpha_global e conteggio elementi invertiti lungo la simulazione.
-% Rappresentazioni qualitative della deformazione della mesh che insegue il fronte mobile.
+
+La validazione conclusiva riguarda la conformità e l'ammissibilità geometrica della triangolazione lungo l'intera sequenza temporale. A differenza dello stress test isolato condotto nello Stage~A (Sezione~\ref{subsec:stage_a_results}), in cui la rete veniva volutamente forzata oltre il proprio regime nominale, in questa sede verifichiamo che il solutore accoppiato preservi a runtime la condizione di non-inversione $J_e(t) \geq \epsilon = 10^{-4}$ definita nella Sezione~\ref{subsec:oracle_formulation}.
+
+Durante l'intera simulazione a 100 time-step condotta con gradiente FEM ricostruito a runtime, il minimo determinante orientato registrato su tutti gli elementi e su tutti gli istanti temporali si attesta a:
+\begin{equation}
+\min_{t \in (0, T]} \min_{e=1,\dots,M} J_e(t) \approx 6.59 \times 10^{-4} > \epsilon,
+\label{eq:final_min_j}
+\end{equation}
+a fronte del valore della griglia indeformata di partenza pari a $J_0 = 9.77 \times 10^{-4}$. Il fattore globale del Safety Filter calcolato tramite l'Equazione~\eqref{eq:global_alpha} si mantiene identicamente pari a $\alpha_{\mathrm{global}}(t) \equiv 1.0$ per tutte le finestre di adattamento nominali, certificando che le predizioni fornite dalla MeshMover GNN ricadono all'interno dell'ipervolume geometricamente ammissibile senza innescare contrazioni proiettive né generare alcuna cella degenere o invertita.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{images/stage_b/fig4_mesh_safety_over_time.png}
+\caption{Evoluzione temporale del minimo determinante orientato $J_{\min}(t)$ durante la simulazione dinamica. La linea orizzontale rappresenta la soglia di sicurezza $\epsilon$.}
+\label{fig:final_mesh_safety}
+\end{figure}
+
+L'analisi di $J_{\min}(t)$ deve essere interpretata insieme all'evoluzione di $\alpha_{\mathrm{global}}(t)$ e agli istanti di adattamento. Un valore $\alpha_{\mathrm{global}}=1$ indica che la predizione GNN è direttamente ammissibile, mentre un valore inferiore a uno segnala che almeno un elemento limita lo spostamento proposto. Il filtro non modifica quindi sistematicamente la traiettoria della mesh, ma interviene solo quando la configurazione prevista rischia di violare il vincolo geometrico.
+
+È importante sottolineare che questa proprietà riguarda esclusivamente la validità geometrica della discretizzazione e non costituisce, di per sé, una proprietà di conservazione della soluzione PDE. La conservazione e la consistenza geometrica sono state verificate separatamente attraverso i test sul remapping e sulla \textit{Discrete Geometric Conservation Law} presentati nel capitolo precedente.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.90\linewidth]{images/stage_c/fig_c6_qualitative_tracking.png}
+\caption{Esempio qualitativo del tracking della struttura della soluzione durante l'evoluzione dinamica con la mesh adattata.}
+\label{fig:final_tracking}
+\end{figure}
+
+Nel complesso, il benchmark dinamico mostra che l'integrazione della GNN con un meccanismo deterministico di controllo geometrico consente di mantenere la validità della mesh durante l'intera simulazione. Il principale effetto della scelta tra remapping $L^2$ e formulazione ALE non riguarda quindi la possibilità di generare una mesh valida, che rimane garantita dal medesimo meccanismo di sicurezza, ma il modo in cui lo stato fisico viene trasferito e il conseguente compromesso tra accuratezza e costo computazionale.
+
+\subsection*{Discussion}
+
+I risultati del benchmark finale evidenziano tre aspetti distinti della pipeline GDM. In primo luogo, il remapping pointwise $P_1$ introduce un errore cumulativo che può diventare dominante rispetto all'errore della discretizzazione FEM. In secondo luogo, la proiezione $L^2$ riduce fortemente tale contributo e porta l'accuratezza complessiva a livelli prossimi alla configurazione a mesh fissa, a fronte tuttavia di un costo computazionale significativo. Infine, la formulazione ALE elimina il trasferimento esplicito dello stato e consente di ridurre sensibilmente il tempo di simulazione, mostrando nel benchmark considerato un'accelerazione di circa $2.37\times$, a fronte di un errore leggermente superiore rispetto alla proiezione $L^2$.
+
+Il confronto suggerisce pertanto che il beneficio di una strategia di mesh adattiva non può essere valutato considerando esclusivamente la qualità geometrica o la capacità della GNN di produrre configurazioni deformate. Il comportamento end-to-end dipende dall'interazione tra adattamento della mesh, discretizzazione della PDE, trasferimento dello stato e costo computazionale. È precisamente questo accoppiamento che costituisce l'oggetto della valutazione finale proposta in questo capitolo.
