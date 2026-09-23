@@ -337,7 +337,7 @@ in cui ciascun contributo ammette una precisa controparte analitica:
 \left( 1 - \eta_e(\mathbf{X}) \right).
 \label{eq:oracle_quality_penalty}
 \end{align}
-Il primo termine misura l'errore quadratico continuo di interpolazione rispetto al proiettore $P_1$ $\Pi_{\mathbf{X}}$, valutato su ogni elemento tramite quadratura di Gauss esatta e riscalato rispetto all'errore iniziale $E_0$. Il termine cinematico $\widetilde{D}(\mathbf{X})$ penalizza spostamenti nodali globali non strettamente necessari al miglioramento dell'accuratezza, mentre $\widetilde{Q}(\mathbf{X})$ regolarizza la forma degli elementi mediante la metrica algebrica normalizzata di Escobar--Knupp $\eta_e \in (0, 1]$, prevenendo eccessive distorsioni d'aspetto. I parametri di accoppiamento sono fissati a $\lambda_D=10^{-2}$ e $\lambda_Q=10^{-3}$.
+Il primo termine misura l'errore quadratico continuo di interpolazione rispetto al proiettore $P_1$ $\Pi_{\mathbf{X}}$, valutato numericamente mediante quadratura di Gauss e riscalato rispetto all'errore iniziale $E_0$. Il termine cinematico $\widetilde{D}(\mathbf{X})$ penalizza spostamenti nodali globali non strettamente necessari al miglioramento dell'accuratezza, mentre $\widetilde{Q}(\mathbf{X})$ regolarizza la forma degli elementi mediante la metrica algebrica normalizzata di Escobar--Knupp $\eta_e \in (0, 1]$, prevenendo eccessive distorsioni d'aspetto. I parametri di accoppiamento sono fissati a $\lambda_D=10^{-2}$ e $\lambda_Q=10^{-3}$.
 
 L'idea alla base del primo termine è direttamente collegata alla teoria dell'errore di interpolazione utilizzata nei metodi di $r$-adaptation classici. In particolare, la distribuzione ottimale dei nodi è legata alla variazione spaziale della soluzione e all'errore associato alla sua rappresentazione mediante funzioni finite di basso ordine \citep{cao2001comparison,huang2003variational}. Nel nostro contesto, tale principio viene utilizzato per costruire un obiettivo computazionale che fornisca una configurazione geometrica di riferimento rispetto alla quale addestrare successivamente il modello neurale.
 
@@ -390,7 +390,7 @@ soggetto ai vincoli geometrici \eqref{eq:boundary_mesh_constraint}--\eqref{eq:me
 
 Il problema \eqref{eq:oracle_constrained} è non lineare rispetto alle coordinate nodali, poiché sia l'errore di interpolazione sia i termini geometrici dipendono dalla configurazione della mesh. Nella realizzazione computazionale adottata, il problema viene risolto mediante un algoritmo quasi-Newtoniano limitato, nello specifico L-BFGS-B, operando su vincoli di tipo box per le coordinate nodali e includendo nella funzione obiettivo i termini necessari a penalizzare configurazioni geometricamente non ammissibili.
 
-Nel solutore numerico, la condizione sul contorno viene imposta escludendo i gradi di libertà di bordo dalle variabili di ottimizzazione, mentre le coordinate interne sono vincolate al dominio computazionale mediante vincoli box $\mathbf{x}_i \in [0,1]^2$. Il vincolo di non-inversione $J_e \geq \epsilon$ viene gestito integrando una funzione barriera quadratica esterna:
+Nel solutore numerico, la condizione sul contorno viene imposta escludendo i gradi di libertà di bordo dalle variabili di ottimizzazione, mentre le coordinate interne sono vincolate al dominio computazionale mediante vincoli box $\mathbf{x}_i \in [0,1]^2$. Il vincolo di non-inversione $J_e \geq \epsilon$ viene gestito integrando una penalizzazione quadratica esterna:
 \begin{equation}
 \mathbf{X}^{\star}
 =
@@ -417,4 +417,4 @@ Una volta determinata la configurazione ottimale, il corrispondente campo di spo
 \end{equation}
 Il campo vettoriale $\Delta\mathbf{X}^{\star} \in \mathbb{R}^{N \times 2}$ rappresenta lo spostamento ammissibile che massimizza la risoluzione locale nelle regioni a forte gradiente senza alterare la connettività della griglia. Tale quantità costituisce il target supervisionato di riferimento generato offline. 
 
-Nel capitolo seguente verrà formulato il framework Graph Dynamic Meshing (GDM), deputato ad approssimare efficientemente la mappatura tra stato fisico e spostamento $\Delta\mathbf{X}^{\star}$, garantendo contemporaneamente il rispetto incondizionato del vincolo $J_e \geq \epsilon$ a runtime.
+Nel capitolo seguente verrà formulato il framework Graph Dynamic Meshing (GDM), deputato ad approssimare efficientemente la mappatura tra stato fisico e spostamento $\Delta\mathbf{X}^{\star}$, Nel capitolo seguente verrà formulato il framework Graph Dynamic Meshing (GDM), deputato ad approssimare efficientemente la mappatura tra stato fisico e spostamento $\Delta\mathbf{X}^{\star}$, associandovi un controllo geometrico deterministico a runtime.

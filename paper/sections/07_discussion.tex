@@ -2,3 +2,17 @@
 % 7.2 Perché l'ottimizzazione geometrica istantanea non equivale all'ottimo per l'errore PDE temporale.
 % 7.3 Generalizzabilità della GNN a diverse condizioni fluidodinamiche senza retraining.
 % 7.4 Limitazioni attuali: approccio mono-dominio 2D, connettività costante (r-adaptation pura senza topologia dinamica h/p).
+
+I risultati del benchmark finale mostrano che l'effetto della mesh adaptation non può essere valutato separando la qualità della configurazione geometrica dal meccanismo numerico utilizzato per evolvere lo stato fisico.
+
+La configurazione GDM + $P_1$ presenta l'errore più elevato tra le strategie considerate, con $12.72\%$ al tempo finale e $10.32\%$ di errore integrato. Questo comportamento è coerente con la diagnostica dello Stage B e conferma che il remapping pointwise, se applicato ripetutamente durante una simulazione transiente, può introdurre un contributo d'errore rilevante.
+
+La configurazione GDM + $L^2$ riduce sensibilmente tale contributo e raggiunge valori di errore prossimi alla mesh fissa, pari a $8.92\%$ al tempo finale e $7.87\%$ sull'intero intervallo temporale. Tale risultato è ottenuto a fronte di un costo computazionale elevato, con $3.35$ s dei $4.18$ s complessivi attribuiti al trasferimento dello stato nel benchmark considerato.
+
+La formulazione GDM + ALE elimina il trasferimento esplicito e riduce il costo complessivo a $1.76$ s, ottenendo uno speedup di $2.37\times$ rispetto alla configurazione con proiezione $L^2$. Il vantaggio computazionale è accompagnato da un errore leggermente superiore, pari a $9.47\%$ al tempo finale e $8.27\%$ in forma integrata.
+
+Il risultato complessivo evidenzia quindi un compromesso tra accuratezza e costo computazionale: nel benchmark considerato, la proiezione $L^2$ fornisce il livello di errore più vicino alla configurazione a mesh fissa, mentre la formulazione ALE elimina il costo del trasferimento esplicito e produce una simulazione più rapida, mantenendo comunque un errore dello stesso ordine di grandezza.
+
+La robustezza geometrica non costituisce invece un fattore discriminante tra le configurazioni nominali considerate, poiché la sequenza di target GNN utilizzata nel benchmark rimane ammissibile e il Safety Filter non viene attivato. La sua funzione di protezione è stata verificata separatamente nello stress test dello Stage A.
+
+Nel complesso, il benchmark end-to-end conferma che la prestazione del framework GDM dipende dall'interazione tra adattamento geometrico, discretizzazione della PDE, meccanismo di trasferimento dello stato e costo computazionale. La valutazione congiunta di questi fattori costituisce il risultato finale della metodologia presentata nei capitoli precedenti.
