@@ -22,6 +22,8 @@ htmlcov/
 data/raw/*.pkl
 data/processed/*.pkl
 data/processed/*.pt
+data/raw_oracle_v2/
+manifest_oracle_v2.json
 !data/manifest.json
 !data/raw/.gitkeep
 !data/processed/.gitkeep

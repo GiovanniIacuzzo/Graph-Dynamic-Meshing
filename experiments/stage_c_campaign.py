@@ -1,14 +1,18 @@
 """
 experiments/stage_c_campaign.py
 Campagna finale dello Stage C:
-Fixed (C0) vs GDM + L2-Remap (C1) vs GDM + ALE (C2) vs Oracle + ALE (C3).
-Genera figure per il paper e la tabella riassuntiva LaTeX.
+1. Esperimento A (Controlled Target Replay):
+   Confronta P1-Remap, L2-Remap e ALE sulla MEDESIMA sequenza di configurazioni target GNN.
+2. Esperimento B (End-to-End Closed-Loop Benchmark):
+   Confronta Fixed (C0), GDM + P1 (C1), GDM + L2 (C2), GDM + ALE (C3) e Oracle + ALE (C4)
+   in esecuzione autonoma closed-loop, con timing scorporato dalle diagnostiche.
 """
 
 import sys
 import json
 import time
 from pathlib import Path
+from typing import Dict, Any, List, Optional
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
@@ -19,9 +23,9 @@ from utils.utils import load_config, ensure_dir
 from generate_dataset import create_initial_mesh_2d
 from geometry.mesh import TriangularMesh2D
 from geometry.geometry import compute_mesh_metrics
-from geometry.safety import apply_safety_filter
 from numerics.pde import ManufacturedConvectionDiffusion2D
 from numerics.fem import ConvectionDiffusionFEM2D, compute_field_gradients
+from numerics.remap import remap_p1_solution
 from numerics.remap_l2 import remap_l2_projection
 from numerics.dynamic_solver import compute_continuous_errors
 from numerics.ale import ALESolver2D
@@ -31,18 +35,30 @@ from inference import MeshMoverInferenceEngine
 
 
 class StageCCampaign:
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(
+        self,
+        config_path: str = "config/config.yaml",
+        checkpoint_path: str | Path = "results/stage_a/checkpoints/best_model.pt",
+        output_dir: str | Path = "results/stage_c",
+        n_timing_repeats: int = 3,
+    ):
         self.config = load_config(config_path)
-        self.output_dir = ensure_dir("results/stage_c")
+        self.output_dir = ensure_dir(output_dir)
         self.figures_dir = ensure_dir(self.output_dir / "figures")
         self.tables_dir = ensure_dir(self.output_dir / "tables")
         self.raw_dir = ensure_dir(self.output_dir / "raw_metrics")
+        self.n_timing_repeats = max(1, int(n_timing_repeats))
 
         self.pde = ManufacturedConvectionDiffusion2D(
             bx=0.4, by=0.2, nu=1e-3, sigma=0.06, beta=0.5, T=0.5
         )
         self.domain = self.config["geometry"]["domain"]
-        self.checkpoint_path = Path("results/stage_a/checkpoints/best_model.pt")
+
+        self.checkpoint_path = Path(checkpoint_path)
+        if not self.checkpoint_path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint non trovato: {self.checkpoint_path.resolve()}"
+            )
 
         self.T = 0.5
         self.dt = 0.005
@@ -54,7 +70,7 @@ class StageCCampaign:
         self.engine = MeshMoverInferenceEngine(
             checkpoint_path=self.checkpoint_path,
             config=self.config,
-            device="cpu"
+            device="cpu",
         )
         self.eps = float(self.config["geometry"]["safety"]["epsilon"])
 
@@ -62,275 +78,440 @@ class StageCCampaign:
             "font.family": "serif",
             "font.size": 10,
             "axes.labelsize": 11,
-            "axes.titlesize": 12,
-            "lines.linewidth": 1.5,
-            "grid.alpha": 0.3
+            "axes.titlesize": 11,
+            "lines.linewidth": 1.6,
+            "grid.alpha": 0.3,
         })
 
-    def run_benchmark(self):
-        print("\n" + "=" * 80)
-        print("AVVIO BENCHMARK DINAMICO CONCLUSIVO STAGE C: ALE vs L2-REMAP vs FIXED")
-        print("=" * 80)
+    # =========================================================================
+    # RUNNER UNIFICATO PER SINGOLA CONFIGURAZIONE (CON TIMING PURO SCORPORATO)
+    # =========================================================================
+    def _execute_single_run(
+        self,
+        method: str,
+        replay_targets: Optional[List[np.ndarray]] = None,
+        compute_diagnostics: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Esegue una singola simulazione su [0, T] con istanti di adattamento sincronizzati
+        all'inizio di ciascuna finestra: (step - 1) % adapt_interval == 0.
 
-        results = {}
+        method in:
+          - 'fixed'
+          - 'gdm_p1'
+          - 'gdm_l2'
+          - 'gdm_ale'
+          - 'oracle_ale'
+        Se replay_targets è fornito, utilizza i nodi target precalcolati invece di invocare GNN/Oracle.
+        """
+        init_mesh = create_initial_mesh_2d(self.domain, nx=self.nx, ny=self.ny)
+        curr_mesh = init_mesh
+        u_curr = self.pde.evaluate_solution(curr_mesh.nodes[:, 0], curr_mesh.nodes[:, 1], 0.0)
 
-        # -------------------------------------------------------------
-        # C0: Fixed Mesh
-        # -------------------------------------------------------------
-        print("\n---> Esecuzione C0: Fixed Eulerian FEM...")
-        mesh_c0 = create_initial_mesh_2d(self.domain, nx=self.nx, ny=self.ny)
-        fem_c0 = ConvectionDiffusionFEM2D(mesh_c0, self.pde)
-        u_c0 = self.pde.evaluate_solution(mesh_c0.nodes[:, 0], mesh_c0.nodes[:, 1], 0.0)
+        fem_time_s = 0.0
+        adapt_time_s = 0.0
+        safety_time_s = 0.0
+        remap_time_s = 0.0
 
-        t0 = time.perf_counter()
+        if method in ["fixed", "gdm_p1", "gdm_l2"]:
+            t_f0 = time.perf_counter()
+            fem_solver = ConvectionDiffusionFEM2D(curr_mesh, self.pde)
+            fem_time_s += time.perf_counter() - t_f0
+            ale_solver = None
+        else:
+            fem_solver = None
+            ale_solver = ALESolver2D(self.pde, nu=1e-3, bx=0.4, by=0.2)
+
         time_arr = [0.0]
-        l2_c0 = [compute_continuous_errors(mesh_c0, u_c0, self.pde, 0.0)[0]]
-        fem_time_c0 = 0.0
+        l2_series = []
+        h1_series = []
+        min_j_series = []
+        alpha_series = [1.0]
+        recorded_targets: List[np.ndarray] = []
+        snapshots = [(0.0, curr_mesh.nodes.copy(), u_curr.copy())]
 
-        for step in range(1, self.n_steps + 1):
-            t_next = step * self.dt
-            t_f0 = time.perf_counter()
-            u_c0 = fem_c0.step_backward_euler(u_c0, dt=self.dt, t_next=t_next)
-            fem_time_c0 += (time.perf_counter() - t_f0)
+        if compute_diagnostics:
+            err_l2_0, err_h1_0 = compute_continuous_errors(curr_mesh, u_curr, self.pde, 0.0)
+            l2_series.append(err_l2_0)
+            h1_series.append(err_h1_0)
+            j0 = float(np.min(compute_mesh_metrics(curr_mesh.nodes, curr_mesh.cells)["jacobians"]))
+            min_j_series.append(j0)
 
-            err_l2, _ = compute_continuous_errors(mesh_c0, u_c0, self.pde, t_next)
-            time_arr.append(t_next)
-            l2_c0.append(err_l2)
-
-        tot_time_c0 = time.perf_counter() - t0
-        results["C0_fixed"] = {
-            "time": time_arr,
-            "rel_l2_error": l2_c0,
-            "final_l2": l2_c0[-1],
-            "time_int_l2": float(np.trapz(l2_c0, time_arr) / self.T),
-            "fem_time_s": fem_time_c0,
-            "remap_time_s": 0.0,
-            "adapt_time_s": 0.0,
-            "total_time_s": tot_time_c0,
-            "min_jacobian": min(compute_mesh_metrics(mesh_c0.nodes, mesh_c0.cells)["jacobians"])
-        }
-
-        # -------------------------------------------------------------
-        # C1: GDM + L2-Remap (Stage B)
-        # -------------------------------------------------------------
-        print("\n---> Esecuzione C1: GDM + L2-Projection Remap (Stage B)...")
-        mesh_c1 = create_initial_mesh_2d(self.domain, nx=self.nx, ny=self.ny)
-        fem_c1 = ConvectionDiffusionFEM2D(mesh_c1, self.pde)
-        u_c1 = self.pde.evaluate_solution(mesh_c1.nodes[:, 0], mesh_c1.nodes[:, 1], 0.0)
-
-        t0 = time.perf_counter()
-        l2_c1 = [compute_continuous_errors(mesh_c1, u_c1, self.pde, 0.0)[0]]
-        fem_time_c1 = 0.0
-        remap_time_c1 = 0.0
-        adapt_time_c1 = 0.0
-        min_j_c1 = float("inf")
+        base_nodes = curr_mesh.nodes.copy()
+        target_nodes = curr_mesh.nodes.copy()
+        window_idx = 0
+        alpha_current_window = 1.0
 
         for step in range(1, self.n_steps + 1):
             t_curr = (step - 1) * self.dt
             t_next = step * self.dt
 
-            if step % self.adapt_interval == 0:
-                t_ad0 = time.perf_counter()
-                grad_u = compute_field_gradients(mesh_c1, u_c1, self.pde, t_curr, gradient_mode="fem")
-                pred = self.engine.predict(mesh_c1, u_c1, grad_u)
-                new_mesh = pred["adapted_mesh"]
-                adapt_time_c1 += (time.perf_counter() - t_ad0)
+            # -----------------------------------------------------------------
+            # 1. Generazione o caricamento del target all'inizio della finestra
+            # -----------------------------------------------------------------
+            if method != "fixed" and (step - 1) % self.adapt_interval == 0:
+                if replay_targets is not None:
+                    target_nodes = replay_targets[window_idx].copy()
+                    new_mesh = init_mesh.update_coordinates(target_nodes)
+                    alpha_current_window = 1.0
+                else:
+                    if method in ["gdm_p1", "gdm_l2", "gdm_ale"]:
+                        t_g0 = time.perf_counter()
+                        grad_u = compute_field_gradients(
+                            curr_mesh, u_curr, self.pde, t_curr, gradient_mode="fem"
+                        )
+                        grad_elapsed = time.perf_counter() - t_g0
 
-                t_rm0 = time.perf_counter()
-                u_c1 = remap_l2_projection(mesh_c1.nodes, mesh_c1.cells, u_c1, new_mesh.nodes, new_mesh.cells)
-                remap_time_c1 += (time.perf_counter() - t_rm0)
+                        pred = self.engine.predict(curr_mesh, u_curr, grad_u)
+                        new_mesh = pred["adapted_mesh"]
+                        target_nodes = new_mesh.nodes.copy()
+                        alpha_current_window = float(pred.get("safety_alpha", 1.0))
 
-                mesh_c1 = new_mesh
-                fem_c1 = ConvectionDiffusionFEM2D(mesh_c1, self.pde)
+                        adapt_time_s += grad_elapsed + float(pred["timing"]["gnn_time"])
+                        safety_time_s += float(pred["timing"]["safety_time"])
 
-            t_f0 = time.perf_counter()
-            u_c1 = fem_c1.step_backward_euler(u_c1, dt=self.dt, t_next=t_next)
-            fem_time_c1 += (time.perf_counter() - t_f0)
+                    elif method == "oracle_ale":
+                        t_or0 = time.perf_counter()
+                        cx, cy = self.pde.get_center(t_curr)
+                        field_oracle = GaussianBumpField(
+                            mu_x=cx,
+                            mu_y=cy,
+                            sigma=self.pde.sigma,
+                            amplitude=np.exp(-self.pde.beta * t_curr),
+                        )
+                        opt = OfflineMeshOptimizer(
+                            reference_field=field_oracle,
+                            initial_nodes=curr_mesh.nodes,
+                            cells=curr_mesh.cells,
+                            boundary_nodes=curr_mesh.boundary_nodes,
+                            lambda_D=self.config["oracle"]["objective"]["lambda_D"],
+                            lambda_Q=self.config["oracle"]["objective"]["lambda_Q"],
+                            epsilon=self.eps,
+                            max_iter=3,
+                        )
+                        opt_res = opt.optimize()
+                        target_nodes = opt_res["optimal_nodes"].copy()
+                        new_mesh = init_mesh.update_coordinates(target_nodes)
+                        alpha_current_window = float(
+                            opt_res["final_metrics"].get("safety_alpha_applied", 1.0)
+                        )
+                        adapt_time_s += time.perf_counter() - t_or0
 
-            err_l2, _ = compute_continuous_errors(mesh_c1, u_c1, self.pde, t_next)
-            l2_c1.append(err_l2)
-            min_j_c1 = min(min_j_c1, float(min(compute_mesh_metrics(mesh_c1.nodes, mesh_c1.cells)["jacobians"])))
+                recorded_targets.append(target_nodes.copy())
+                base_nodes = curr_mesh.nodes.copy()
+                window_idx += 1
 
-        tot_time_c1 = time.perf_counter() - t0
-        results["C1_gdm_l2"] = {
-            "time": time_arr,
-            "rel_l2_error": l2_c1,
-            "final_l2": l2_c1[-1],
-            "time_int_l2": float(np.trapz(l2_c1, time_arr) / self.T),
-            "fem_time_s": fem_time_c1,
-            "remap_time_s": remap_time_c1,
-            "adapt_time_s": adapt_time_c1,
-            "total_time_s": tot_time_c1,
-            "min_jacobian": min_j_c1
-        }
+                # Se il metodo è a rilocazione discreta (P1 o L2), applica subito il remapping a t_curr
+                if method in ["gdm_p1", "gdm_l2"]:
+                    u_before_remap = u_curr.copy()
+                    t_rm0 = time.perf_counter()
 
-        # -------------------------------------------------------------
-        # C2: GDM + ALE (Metodo proposto)
-        # -------------------------------------------------------------
-        print("\n---> Esecuzione C2: GDM + ALE D-GCL (Metodo proposto)...")
-        init_m_c2 = create_initial_mesh_2d(self.domain, nx=self.nx, ny=self.ny)
-        curr_m_c2 = init_m_c2
-        u_c2 = self.pde.evaluate_solution(curr_m_c2.nodes[:, 0], curr_m_c2.nodes[:, 1], 0.0)
-        ale_solver = ALESolver2D(self.pde, nu=1e-3, bx=0.4, by=0.2)
+                    if method == "gdm_p1":
+                        u_remapped = remap_p1_solution(
+                            old_nodes=curr_mesh.nodes,
+                            old_cells=curr_mesh.cells,
+                            old_u=u_before_remap,
+                            new_nodes=new_mesh.nodes,
+                        )
+                    else:
+                        u_remapped = remap_l2_projection(
+                            old_nodes=curr_mesh.nodes,
+                            old_cells=curr_mesh.cells,
+                            old_u=u_before_remap,
+                            new_nodes=new_mesh.nodes,
+                            new_cells=new_mesh.cells,
+                        )
 
-        t0 = time.perf_counter()
-        l2_c2 = [compute_continuous_errors(curr_m_c2, u_c2, self.pde, 0.0)[0]]
-        fem_time_c2 = 0.0
-        adapt_time_c2 = 0.0
-        min_j_c2 = float("inf")
-        snapshots_c2 = [(0.0, curr_m_c2.nodes.copy(), u_c2.copy())]
+                    boundary_nodes = np.asarray(new_mesh.boundary_nodes, dtype=np.int64)
+                    u_remapped[boundary_nodes] = self.pde.evaluate_solution(
+                        new_mesh.nodes[boundary_nodes, 0],
+                        new_mesh.nodes[boundary_nodes, 1],
+                        t_curr,
+                    )
+                    remap_time_s += time.perf_counter() - t_rm0
 
-        base_nodes = curr_m_c2.nodes.copy()
-        target_nodes = curr_m_c2.nodes.copy()
+                    curr_mesh = new_mesh
+                    u_curr = u_remapped
 
-        for step in range(1, self.n_steps + 1):
-            t_curr = (step - 1) * self.dt
-            t_next = step * self.dt
+                    t_f0 = time.perf_counter()
+                    fem_solver = ConvectionDiffusionFEM2D(curr_mesh, self.pde)
+                    fem_time_s += time.perf_counter() - t_f0
 
-            # Ricalcolo del target di adattamento ogni adapt_interval time-step
-            if (step - 1) % self.adapt_interval == 0:
-                t_ad0 = time.perf_counter()
-                grad_u = compute_field_gradients(curr_m_c2, u_c2, self.pde, t_curr, gradient_mode="fem")
-                pred = self.engine.predict(curr_m_c2, u_c2, grad_u)
-                target_nodes = pred["adapted_mesh"].nodes.copy()
-                base_nodes = curr_m_c2.nodes.copy()
-                adapt_time_c2 += (time.perf_counter() - t_ad0)
+            # -----------------------------------------------------------------
+            # 2. Avanzamento temporale della PDE da t_curr a t_next
+            # -----------------------------------------------------------------
+            if method in ["fixed", "gdm_p1", "gdm_l2"]:
+                t_f0 = time.perf_counter()
+                u_curr = fem_solver.step_backward_euler(u_curr, dt=self.dt, t_next=t_next)
+                fem_time_s += time.perf_counter() - t_f0
+            else:
+                k_step = ((step - 1) % self.adapt_interval) + 1
+                interp_nodes = base_nodes + (k_step / self.adapt_interval) * (target_nodes - base_nodes)
+                next_mesh = init_mesh.update_coordinates(interp_nodes)
 
-            # Deformazione continua lineare nel sotto-intervallo: w = Delta X / (N_a * dt)
-            k_step = (step - 1) % self.adapt_interval + 1
-            interp_nodes = base_nodes + (k_step / self.adapt_interval) * (target_nodes - base_nodes)
-            next_m_c2 = init_m_c2.update_coordinates(interp_nodes)
-
-            t_f0 = time.perf_counter()
-            u_c2, _ = ale_solver.step_ale(curr_m_c2, next_m_c2, u_c2, dt=self.dt, t_next=t_next, pure_gcl=False)
-            fem_time_c2 += (time.perf_counter() - t_f0)
-
-            err_l2, _ = compute_continuous_errors(next_m_c2, u_c2, self.pde, t_next)
-            l2_c2.append(err_l2)
-            min_j_c2 = min(min_j_c2, float(min(compute_mesh_metrics(next_m_c2.nodes, next_m_c2.cells)["jacobians"])))
-
-            curr_m_c2 = next_m_c2
-
-            if step in [int(round(self.n_steps / 3)), int(round(2 * self.n_steps / 3)), self.n_steps]:
-                snapshots_c2.append((t_next, curr_m_c2.nodes.copy(), u_c2.copy()))
-
-        tot_time_c2 = time.perf_counter() - t0
-        results["C2_gdm_ale"] = {
-            "time": time_arr,
-            "rel_l2_error": l2_c2,
-            "final_l2": l2_c2[-1],
-            "time_int_l2": float(np.trapz(l2_c2, time_arr) / self.T),
-            "fem_time_s": fem_time_c2,
-            "remap_time_s": 0.0,
-            "adapt_time_s": adapt_time_c2,
-            "total_time_s": tot_time_c2,
-            "min_jacobian": min_j_c2
-        }
-
-        # -------------------------------------------------------------
-        # C3: Oracle + ALE
-        # -------------------------------------------------------------
-        print("\n---> Esecuzione C3: Oracle + ALE D-GCL...")
-        init_m_c3 = create_initial_mesh_2d(self.domain, nx=self.nx, ny=self.ny)
-        curr_m_c3 = init_m_c3
-        u_c3 = self.pde.evaluate_solution(curr_m_c3.nodes[:, 0], curr_m_c3.nodes[:, 1], 0.0)
-
-        t0 = time.perf_counter()
-        l2_c3 = [compute_continuous_errors(curr_m_c3, u_c3, self.pde, 0.0)[0]]
-        fem_time_c3 = 0.0
-        adapt_time_c3 = 0.0
-        min_j_c3 = float("inf")
-
-        base_nodes_orc = curr_m_c3.nodes.copy()
-        target_nodes_orc = curr_m_c3.nodes.copy()
-
-        for step in range(1, self.n_steps + 1):
-            t_curr = (step - 1) * self.dt
-            t_next = step * self.dt
-
-            if (step - 1) % self.adapt_interval == 0:
-                t_ad0 = time.perf_counter()
-                cx, cy = self.pde.get_center(t_curr)
-                field_oracle = GaussianBumpField(mu_x=cx, mu_y=cy, sigma=self.pde.sigma, amplitude=np.exp(-self.pde.beta * t_curr))
-                opt = OfflineMeshOptimizer(
-                    field_oracle, curr_m_c3.nodes, curr_m_c3.cells, curr_m_c3.boundary_nodes,
-                    lambda_D=self.config["oracle"]["objective"]["lambda_D"],
-                    lambda_Q=self.config["oracle"]["objective"]["lambda_Q"],
-                    epsilon=self.eps, max_iter=3
+                t_f0 = time.perf_counter()
+                u_curr, _ = ale_solver.step_ale(
+                    curr_mesh,
+                    next_mesh,
+                    u_curr,
+                    dt=self.dt,
+                    t_next=t_next,
+                    pure_gcl=False,
                 )
-                opt_res = opt.optimize()
-                target_nodes_orc = opt_res["optimal_nodes"].copy()
-                base_nodes_orc = curr_m_c3.nodes.copy()
-                adapt_time_c3 += (time.perf_counter() - t_ad0)
+                fem_time_s += time.perf_counter() - t_f0
+                curr_mesh = next_mesh
 
-            k_step = (step - 1) % self.adapt_interval + 1
-            interp_nodes = base_nodes_orc + (k_step / self.adapt_interval) * (target_nodes_orc - base_nodes_orc)
-            next_m_c3 = init_m_c3.update_coordinates(interp_nodes)
+            # -----------------------------------------------------------------
+            # 3. Diagnostica fuori dal cronometro algoritmico
+            # -----------------------------------------------------------------
+            if compute_diagnostics:
+                time_arr.append(t_next)
+                err_l2, err_h1 = compute_continuous_errors(curr_mesh, u_curr, self.pde, t_next)
+                l2_series.append(err_l2)
+                h1_series.append(err_h1)
 
-            t_f0 = time.perf_counter()
-            u_c3, _ = ale_solver.step_ale(curr_m_c3, next_m_c3, u_c3, dt=self.dt, t_next=t_next, pure_gcl=False)
-            fem_time_c3 += (time.perf_counter() - t_f0)
+                j_curr = float(np.min(compute_mesh_metrics(curr_mesh.nodes, curr_mesh.cells)["jacobians"]))
+                min_j_series.append(j_curr)
+                alpha_series.append(alpha_current_window)
 
-            err_l2, _ = compute_continuous_errors(next_m_c3, u_c3, self.pde, t_next)
-            l2_c3.append(err_l2)
-            min_j_c3 = min(min_j_c3, float(min(compute_mesh_metrics(next_m_c3.nodes, next_m_c3.cells)["jacobians"])))
-            curr_m_c3 = next_m_c3
+                if step in [
+                    int(round(self.n_steps / 3)),
+                    int(round(2 * self.n_steps / 3)),
+                    self.n_steps,
+                ]:
+                    snapshots.append((t_next, curr_mesh.nodes.copy(), u_curr.copy()))
 
-        tot_time_c3 = time.perf_counter() - t0
-        results["C3_oracle_ale"] = {
-            "time": time_arr,
-            "rel_l2_error": l2_c3,
-            "final_l2": l2_c3[-1],
-            "time_int_l2": float(np.trapz(l2_c3, time_arr) / self.T),
-            "fem_time_s": fem_time_c3,
-            "remap_time_s": 0.0,
-            "adapt_time_s": adapt_time_c3,
-            "total_time_s": tot_time_c3,
-            "min_jacobian": min_j_c3
+        total_algo_s = fem_time_s + adapt_time_s + safety_time_s + remap_time_s
+
+        out: Dict[str, Any] = {
+            "fem_time_s": fem_time_s,
+            "adapt_time_s": adapt_time_s,
+            "safety_time_s": safety_time_s,
+            "remap_time_s": remap_time_s,
+            "total_time_s": total_algo_s,
+            "recorded_targets": recorded_targets,
         }
 
-        self.results = results
-        self.snapshots_c2 = snapshots_c2
-        self.final_mesh_c2 = curr_m_c2
-        self.final_u_c2 = u_c2
+        if compute_diagnostics:
+            out.update({
+                "time": time_arr,
+                "rel_l2_error": l2_series,
+                "rel_h1_error": h1_series,
+                "final_l2": float(l2_series[-1]),
+                "time_int_l2": float(np.trapz(l2_series, time_arr) / self.T),
+                "final_h1": float(h1_series[-1]),
+                "time_int_h1": float(np.trapz(h1_series, time_arr) / self.T),
+                "min_jacobian": float(np.min(min_j_series)),
+                "min_j_series": min_j_series,
+                "alpha_series": alpha_series,
+                "snapshots": snapshots,
+                "final_mesh": curr_mesh,
+                "final_u": u_curr,
+            })
 
+        return out
+
+    def _run_with_clean_timing(
+        self,
+        method: str,
+        replay_targets: Optional[List[np.ndarray]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Esegue una corsa con diagnostica per raccogliere errori e traiettorie,
+        seguita da n_timing_repeats corse pure (compute_diagnostics=False) per
+        stimare mediana e IQR dei tempi di esecuzione.
+        """
+        res = self._execute_single_run(method, replay_targets=replay_targets, compute_diagnostics=True)
+
+        # Per l'oracolo (molto lento) eseguiamo 1 sola corsa pura oltre a quella diagnostica
+        repeats = 1 if method == "oracle_ale" else self.n_timing_repeats
+        fem_t, adapt_t, safety_t, remap_t, tot_t = [], [], [], [], []
+
+        for _ in range(repeats):
+            t_run = self._execute_single_run(method, replay_targets=replay_targets, compute_diagnostics=False)
+            fem_t.append(t_run["fem_time_s"])
+            adapt_t.append(t_run["adapt_time_s"])
+            safety_t.append(t_run["safety_time_s"])
+            remap_t.append(t_run["remap_time_s"])
+            tot_t.append(t_run["total_time_s"])
+
+        res["fem_time_s"] = float(np.median(fem_t))
+        res["adapt_time_s"] = float(np.median(adapt_t))
+        res["safety_time_s"] = float(np.median(safety_t))
+        res["remap_time_s"] = float(np.median(remap_t))
+        res["total_time_s"] = float(np.median(tot_t))
+        res["total_time_std_s"] = float(np.std(tot_t))
+        return res
+
+    def run_benchmark(self):
+        print("\n" + "=" * 85)
+        print("AVVIO CAMPAGNA STAGE C: ESPERIMENTO B (CLOSED-LOOP) & ESPERIMENTO A (TARGET REPLAY)")
+        print("=" * 85)
+
+        # Warm-up dell'inferenza PyTorch GNN su CPU per evitare bias di allocazione iniziale
+        mesh_warm = create_initial_mesh_2d(self.domain, nx=self.nx, ny=self.ny)
+        u_warm = np.zeros(mesh_warm.num_nodes, dtype=np.float64)
+        g_warm = np.zeros((mesh_warm.num_nodes, 2), dtype=np.float64)
+        _ = self.engine.predict(mesh_warm, u_warm, g_warm)
+
+        # ---------------------------------------------------------------------
+        # 1. ESPERIMENTO B: Confronto End-to-End Closed-Loop
+        # ---------------------------------------------------------------------
+        print("\n[ESPERIMENTO B] Esecuzione End-to-End Closed-Loop (Target autonomi)...")
+        closed_loop: Dict[str, Any] = {}
+
+        print("  -> C0: Fixed Eulerian FEM...")
+        closed_loop["C0_fixed"] = self._run_with_clean_timing("fixed")
+
+        print("  -> C1: GDM + P1 Pointwise Remap (Closed-Loop)...")
+        closed_loop["C1_gdm_p1"] = self._run_with_clean_timing("gdm_p1")
+
+        print("  -> C2: GDM + L2 Projection Remap (Closed-Loop)...")
+        closed_loop["C2_gdm_l2"] = self._run_with_clean_timing("gdm_l2")
+
+        print("  -> C3: GDM + ALE D-GCL (Closed-Loop, Metodo proposto)...")
+        closed_loop["C3_gdm_ale"] = self._run_with_clean_timing("gdm_ale")
+
+        print("  -> C4: Oracle + ALE D-GCL (Closed-Loop)...")
+        closed_loop["C4_oracle_ale"] = self._run_with_clean_timing("oracle_ale")
+
+        # ---------------------------------------------------------------------
+        # 2. ESPERIMENTO A: Replay Controllato con Sequenza Target Identica
+        # ---------------------------------------------------------------------
+        print("\n[ESPERIMENTO A] Esecuzione Replay Controllato (Stessa sequenza target GNN)...")
+        shared_targets = closed_loop["C3_gdm_ale"]["recorded_targets"]
+
+        replay_results: Dict[str, Any] = {
+            "R0_fixed": closed_loop["C0_fixed"],
+            "R1_gdm_p1_replay": self._run_with_clean_timing("gdm_p1", replay_targets=shared_targets),
+            "R2_gdm_l2_replay": self._run_with_clean_timing("gdm_l2", replay_targets=shared_targets),
+            "R3_gdm_ale_replay": self._run_with_clean_timing("gdm_ale", replay_targets=shared_targets),
+        }
+        # Nel replay aggiungiamo il tempo medio di generazione GNN/Safety per confrontare il costo totale della pipeline
+        gnn_t_ref = closed_loop["C3_gdm_ale"]["adapt_time_s"]
+        saf_t_ref = closed_loop["C3_gdm_ale"]["safety_time_s"]
+        for k_rep in ["R1_gdm_p1_replay", "R2_gdm_l2_replay", "R3_gdm_ale_replay"]:
+            replay_results[k_rep]["adapt_time_s"] = gnn_t_ref
+            replay_results[k_rep]["safety_time_s"] = saf_t_ref
+            replay_results[k_rep]["total_time_s"] = (
+                replay_results[k_rep]["fem_time_s"]
+                + replay_results[k_rep]["remap_time_s"]
+                + gnn_t_ref
+                + saf_t_ref
+            )
+
+        self.closed_loop = closed_loop
+        self.replay_results = replay_results
+        self.snapshots_c3 = closed_loop["C3_gdm_ale"]["snapshots"]
+        self.final_mesh_c3 = closed_loop["C3_gdm_ale"]["final_mesh"]
+
+        self._print_summary_tables()
         self._export_results_and_table()
         self._generate_stage_c_figures()
 
+    def _print_summary_tables(self):
+        print("\n" + "=" * 95)
+        print("RIEPILOGO ESPERIMENTO B — END-TO-END CLOSED-LOOP (Ogni metodo genera i propri target)")
+        print("=" * 95)
+        header = (
+            f"{'Configurazione':<24} | {'E_L2(T) [%]':<12} | {'Int E_L2 [%]':<12} | "
+            f"{'min J_e':<10} | {'T_FEM [s]':<9} | {'T_Remap [s]':<11} | {'T_Adapt [s]':<11} | {'T_Tot [s]':<9}"
+        )
+        print(header)
+        print("-" * len(header))
+        for label, key in [
+            ("Fixed FEM (C0)", "C0_fixed"),
+            ("GDM + P1 Remap (C1)", "C1_gdm_p1"),
+            ("GDM + L2 Remap (C2)", "C2_gdm_l2"),
+            ("GDM + ALE (C3, Ours)", "C3_gdm_ale"),
+            ("Oracle + ALE (C4)", "C4_oracle_ale"),
+        ]:
+            r = self.closed_loop[key]
+            adapt_tot = r["adapt_time_s"] + r["safety_time_s"]
+            print(
+                f"{label:<24} | {r['final_l2']*100:<12.2f} | {r['time_int_l2']*100:<12.2f} | "
+                f"{r['min_jacobian']:<10.2e} | {r['fem_time_s']:<9.3f} | {r['remap_time_s']:<11.3f} | "
+                f"{adapt_tot:<11.3f} | {r['total_time_s']:<9.3f}"
+            )
+
+        s_ale_vs_l2 = self.closed_loop["C2_gdm_l2"]["total_time_s"] / self.closed_loop["C3_gdm_ale"]["total_time_s"]
+        s_ale_vs_orc = self.closed_loop["C4_oracle_ale"]["total_time_s"] / self.closed_loop["C3_gdm_ale"]["total_time_s"]
+        print("-" * len(header))
+        print(f"Speedup Closed-Loop (GDM+ALE vs GDM+L2)     : {s_ale_vs_l2:.2f}x")
+        print(f"Speedup Closed-Loop (GDM+ALE vs Oracle+ALE) : {s_ale_vs_orc:.2f}x")
+
+        print("\n" + "=" * 95)
+        print("RIEPILOGO ESPERIMENTO A — CONTROLLED TARGET REPLAY (Sequenza target GNN condivisa)")
+        print("=" * 95)
+        print(header)
+        print("-" * len(header))
+        for label, key in [
+            ("Fixed FEM (R0)", "R0_fixed"),
+            ("GDM + P1 (Replay R1)", "R1_gdm_p1_replay"),
+            ("GDM + L2 (Replay R2)", "R2_gdm_l2_replay"),
+            ("GDM + ALE (Replay R3)", "R3_gdm_ale_replay"),
+        ]:
+            r = self.replay_results[key]
+            adapt_tot = r["adapt_time_s"] + r["safety_time_s"]
+            print(
+                f"{label:<24} | {r['final_l2']*100:<12.2f} | {r['time_int_l2']*100:<12.2f} | "
+                f"{r['min_jacobian']:<10.2e} | {r['fem_time_s']:<9.3f} | {r['remap_time_s']:<11.3f} | "
+                f"{adapt_tot:<11.3f} | {r['total_time_s']:<9.3f}"
+            )
+
     def _export_results_and_table(self):
+        exclude_keys = {"time", "snapshots", "final_mesh", "final_u", "recorded_targets"}
+        payload = {
+            "experiment_b_closed_loop": {
+                k: {m: v for m, v in val.items() if m not in exclude_keys}
+                for k, val in self.closed_loop.items()
+            },
+            "experiment_a_target_replay": {
+                k: {m: v for m, v in val.items() if m not in exclude_keys}
+                for k, val in self.replay_results.items()
+            },
+        }
         with open(self.raw_dir / "stage_c_benchmark_results.json", "w", encoding="utf-8") as f:
-            json.dump({k: {m: v for m, v in val.items() if m != "time"} for k, val in self.results.items()}, f, indent=2)
+            json.dump(payload, f, indent=2)
 
         table_path = self.tables_dir / "table_stage_c_summary.tex"
         rows = [
-            ("Fixed Eulerian (C0)", "C0_fixed"),
-            ("GDM w/ $L^2$-Remap (C1)", "C1_gdm_l2"),
-            ("GDM w/ ALE (C2)", "C2_gdm_ale"),
-            ("Oracle w/ ALE (C3)", "C3_oracle_ale")
+            ("Fixed FEM", "C0_fixed"),
+            ("GDM + $P_1$", "C1_gdm_p1"),
+            ("GDM + $L^2$", "C2_gdm_l2"),
+            ("GDM + ALE (Ours)", "C3_gdm_ale"),
+            ("Oracle + ALE", "C4_oracle_ale"),
         ]
+
+        t_l2 = self.closed_loop["C2_gdm_l2"]["total_time_s"]
+        t_orc = self.closed_loop["C4_oracle_ale"]["total_time_s"]
 
         latex_rows = []
         for name, k in rows:
-            r = self.results[k]
-            speedup = self.results["C3_oracle_ale"]["total_time_s"] / r["total_time_s"]
+            r = self.closed_loop[k]
+            adapt_s = r["adapt_time_s"] + r["safety_time_s"]
+            sp_l2 = t_l2 / r["total_time_s"]
+            sp_orc = t_orc / r["total_time_s"]
             latex_rows.append(
                 f"{name} & {r['final_l2']*100:.2f}\\% & {r['time_int_l2']*100:.2f}\\% & "
                 f"{r['min_jacobian']:.2e} & {r['fem_time_s']:.2f} & {r['remap_time_s']:.2f} & "
-                f"{r['total_time_s']:.2f} & {speedup:.1f}$\\times$ \\\\"
+                f"{adapt_s:.2f} & {r['total_time_s']:.2f} & {sp_l2:.2f}$\\times$ & {sp_orc:.1f}$\\times$ \\\\"
             )
 
         latex_table = (
-            "\\begin{table}[t]\n"
+            "\\begin{table}[htbp]\n"
             "\\centering\n"
-            "\\small\n"
-            "\\caption{Stage C Benchmark Summary ($T=0.5, \\Delta t=0.005, 32\\times 32$ Mesh).}\n"
+            "\\footnotesize\n"
+            "\\caption{Benchmark dinamico finale end-to-end ($T=0.5, \\Delta t=0.005$, mesh $32\\times 32$).}\n"
             "\\label{tab:stage_c_summary}\n"
-            "\\begin{tabular}{lccccccc}\n"
-            "\\hline\n"
-            "Configuration & Final $L^2$ & Time-Int $L^2$ & $\\min_{t,e} J_e$ & FEM Time [s] & Remap Time [s] & Total [s] & Speedup \\\\\n"
-            "\\hline\n" +
-            "\n".join(latex_rows) + "\n"
-            "\\hline\n"
+            "\\begin{tabular}{lccccccccc}\n"
+            "\\toprule\n"
+            "Configurazione & $E_{L^2}(T)$ & $\\overline{E}_{L^2}$ & $\\min_{t,e} J_e$ & "
+            "$T_{\\mathrm{FEM}}$ [s] & $T_{\\mathrm{Remap}}$ [s] & $T_{\\mathrm{Adapt}}$ [s] & "
+            "$T_{\\mathrm{total}}$ [s] & $S_{L^2}$ & $S_{\\mathrm{Oracle}}$ \\\\\n"
+            "\\midrule\n"
+            + "\n".join(latex_rows)
+            + "\n\\bottomrule\n"
             "\\end{tabular}\n"
             "\\end{table}\n"
         )
@@ -340,61 +521,142 @@ class StageCCampaign:
 
     def _generate_stage_c_figures(self):
         print("\n---> Generazione Figure Scientifiche dello Stage C...")
-        t_arr = self.results["C0_fixed"]["time"]
+        t_arr = self.closed_loop["C0_fixed"]["time"]
 
-        # -------------------------------------------------------------
-        # FIGURA C3: Confronto Dinamico Transiente dell'Errore
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------------------
+        # FIGURA C3: Evoluzione Temporale dell'Errore PDE (Benchmark Finale)
+        # ---------------------------------------------------------------------
         fig, ax = plt.subplots(figsize=(6.5, 4.2))
-        ax.plot(t_arr, np.array(self.results["C0_fixed"]["rel_l2_error"]) * 100, label="Fixed Mesh (C0)", color="#7f7f7f", linestyle="--")
-        ax.plot(t_arr, np.array(self.results["C1_gdm_l2"]["rel_l2_error"]) * 100, label=r"GDM w/ $L^2$-Remap (C1)", color="#ff7f0e")
-        ax.plot(t_arr, np.array(self.results["C2_gdm_ale"]["rel_l2_error"]) * 100, label="GDM w/ ALE (C2, Proposto)", color="#1f77b4")
-        ax.plot(t_arr, np.array(self.results["C3_oracle_ale"]["rel_l2_error"]) * 100, label="Oracle w/ ALE (C3)", color="#2ca02c", linestyle=":")
+        ax.plot(
+            t_arr,
+            np.array(self.closed_loop["C0_fixed"]["rel_l2_error"]) * 100,
+            label="Fixed FEM",
+            color="#555555",
+            linestyle="--",
+        )
+        ax.plot(
+            t_arr,
+            np.array(self.closed_loop["C1_gdm_p1"]["rel_l2_error"]) * 100,
+            label=r"GDM + $P_1$ Remap",
+            color="#d62728",
+            linestyle="-.",
+        )
+        ax.plot(
+            t_arr,
+            np.array(self.closed_loop["C2_gdm_l2"]["rel_l2_error"]) * 100,
+            label=r"GDM + $L^2$ Projection",
+            color="#ff7f0e",
+        )
+        ax.plot(
+            t_arr,
+            np.array(self.closed_loop["C3_gdm_ale"]["rel_l2_error"]) * 100,
+            label="GDM + ALE (Proposed)",
+            color="#1f77b4",
+            linewidth=2.0,
+        )
+        ax.plot(
+            t_arr,
+            np.array(self.closed_loop["C4_oracle_ale"]["rel_l2_error"]) * 100,
+            label="Oracle + ALE",
+            color="#2ca02c",
+            linestyle=":",
+        )
 
         ax.set_xlabel("Time $t$ [s]")
         ax.set_ylabel(r"Continuous Relative $L^2$ Error [%]")
-        ax.set_title("Fig. C3: Transient PDE Error: Remap vs ALE Formulation")
         ax.grid(True)
         ax.legend(frameon=True, fontsize=9)
         fig.tight_layout()
         fig.savefig(self.figures_dir / "fig_c3_dynamic_error.png", dpi=300)
         plt.close(fig)
 
-        # -------------------------------------------------------------
-        # FIGURA C5: Decomposizione Cronometrica del Runtime
-        # -------------------------------------------------------------
-        fig, ax = plt.subplots(figsize=(6.5, 4.0))
-        cfgs = ["GDM w/ L2-Remap", "GDM w/ ALE (Ours)", "Oracle w/ ALE"]
-        fem_times = [self.results["C1_gdm_l2"]["fem_time_s"], self.results["C2_gdm_ale"]["fem_time_s"], self.results["C3_oracle_ale"]["fem_time_s"]]
-        remap_times = [self.results["C1_gdm_l2"]["remap_time_s"], 0.0, 0.0]
-        adapt_times = [self.results["C1_gdm_l2"]["adapt_time_s"], self.results["C2_gdm_ale"]["adapt_time_s"], self.results["C3_oracle_ale"]["adapt_time_s"]]
+        # ---------------------------------------------------------------------
+        # FIGURA C4: Evoluzione del Minimo Determinante Jacobiano min_e J_e(t)
+        # ---------------------------------------------------------------------
+        fig, ax = plt.subplots(figsize=(6.5, 3.8))
+        ax.plot(
+            t_arr,
+            self.closed_loop["C2_gdm_l2"]["min_j_series"],
+            label=r"GDM + $L^2$ $\min_e J_e(t)$",
+            color="#ff7f0e",
+            linestyle="--",
+        )
+        ax.plot(
+            t_arr,
+            self.closed_loop["C3_gdm_ale"]["min_j_series"],
+            label=r"GDM + ALE $\min_e J_e(t)$",
+            color="#1f77b4",
+        )
+        ax.plot(
+            t_arr,
+            self.closed_loop["C4_oracle_ale"]["min_j_series"],
+            label=r"Oracle + ALE $\min_e J_e(t)$",
+            color="#2ca02c",
+            linestyle=":",
+        )
+        ax.axhline(
+            self.eps,
+            color="#d62728",
+            linestyle=":",
+            linewidth=1.5,
+            label=rf"Safety Threshold $\epsilon = {self.eps:.1e}$",
+        )
+        ax.set_yscale("log")
+        ax.set_xlabel("Time $t$ [s]")
+        ax.set_ylabel(r"Minimum Jacobian $\min_e J_e$")
+        ax.grid(True, which="both")
+        ax.legend(frameon=True, fontsize=9)
+        fig.tight_layout()
+        fig.savefig(self.figures_dir / "fig_c4_mesh_validity.png", dpi=300)
+        plt.close(fig)
+
+        # ---------------------------------------------------------------------
+        # FIGURA C5: Decomposizione Algoritmica del Runtime
+        # ---------------------------------------------------------------------
+        fig, ax = plt.subplots(figsize=(6.8, 4.0))
+        cfgs = [r"GDM + $P_1$", r"GDM + $L^2$", "GDM + ALE (Ours)", "Oracle + ALE"]
+        keys = ["C1_gdm_p1", "C2_gdm_l2", "C3_gdm_ale", "C4_oracle_ale"]
+
+        fem_times = np.array([self.closed_loop[k]["fem_time_s"] for k in keys])
+        remap_times = np.array([self.closed_loop[k]["remap_time_s"] for k in keys])
+        adapt_times = np.array([
+            self.closed_loop[k]["adapt_time_s"] + self.closed_loop[k]["safety_time_s"]
+            for k in keys
+        ])
 
         x = np.arange(len(cfgs))
-        width = 0.5
-        ax.bar(x, fem_times, width, label="FEM Assembly & Solve", color="#1f77b4")
-        ax.bar(x, remap_times, width, bottom=fem_times, label=r"$L^2$-Projection Remapping", color="#d62728")
-        ax.bar(x, adapt_times, width, bottom=np.array(fem_times) + np.array(remap_times), label="GNN/Oracle Adaptation", color="#2ca02c")
+        width = 0.48
+        ax.bar(x, fem_times, width, label="FEM/ALE Assembly & Solve", color="#1f77b4")
+        ax.bar(x, remap_times, width, bottom=fem_times, label="State Remapping", color="#d62728")
+        ax.bar(
+            x,
+            adapt_times,
+            width,
+            bottom=fem_times + remap_times,
+            label="GNN/Oracle + Safety Filter",
+            color="#2ca02c",
+        )
 
-        ax.set_ylabel("Execution Time [s]")
-        ax.set_title("Fig. C5: Algorithmic Runtime Decomposition (100 Steps)")
+        ax.set_yscale("log")
+        ax.set_ylabel("Algorithmic Execution Time [s] (log scale)")
         ax.set_xticks(x)
         ax.set_xticklabels(cfgs)
-        ax.grid(True, axis="y")
+        ax.grid(True, axis="y", which="both")
         ax.legend(frameon=True, fontsize=9)
         fig.tight_layout()
         fig.savefig(self.figures_dir / "fig_c5_runtime_decomposition.png", dpi=300)
         plt.close(fig)
 
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------------------
         # FIGURA C6: Snapshot Qualitativi e Tracciamento della Soluzione
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------------------
         fig, axes = plt.subplots(2, 4, figsize=(13.0, 6.0))
-        for col, (snap_t, snap_nodes, snap_u) in enumerate(self.snapshots_c2):
-            tri = mtri.Triangulation(snap_nodes[:, 0], snap_nodes[:, 1], self.final_mesh_c2.cells)
+        for col, (snap_t, snap_nodes, snap_u) in enumerate(self.snapshots_c3):
+            tri = mtri.Triangulation(snap_nodes[:, 0], snap_nodes[:, 1], self.final_mesh_c3.cells)
             axes[0, col].triplot(tri, "b-", lw=0.4)
             axes[0, col].set_title(f"Mesh: $t = {snap_t:.2f}$ s")
 
-            cf = axes[1, col].tricontourf(tri, snap_u, levels=25, cmap="viridis")
+            axes[1, col].tricontourf(tri, snap_u, levels=25, cmap="viridis")
             axes[1, col].set_title(f"ALE $u_h(t={snap_t:.2f})$")
 
             for row in range(2):
@@ -402,16 +664,31 @@ class StageCCampaign:
                 axes[row, col].set_xticks([])
                 axes[row, col].set_yticks([])
 
-        fig.suptitle("Fig. C6: Dynamic GNN-ALE Mesh Deformation Tracking the Moving Pulse", fontsize=13)
         fig.tight_layout()
         fig.savefig(self.figures_dir / "fig_c6_qualitative_tracking.png", dpi=300)
         plt.close(fig)
 
-        print("[INFO] Figure generate con successo in results/stage_c/figures/")
+        print(f"[INFO] Figure generate in {self.figures_dir}")
 
 
 def main():
-    campaign = StageCCampaign()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Benchmark dinamico Stage C per Graph-Dynamic Meshing"
+    )
+    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--checkpoint", default="results/stage_a/checkpoints/best_model.pt")
+    parser.add_argument("--output_dir", default="results/stage_c")
+    parser.add_argument("--repeats", type=int, default=3, help="Ripetizioni per mediana runtime")
+    args = parser.parse_args()
+
+    campaign = StageCCampaign(
+        config_path=args.config,
+        checkpoint_path=args.checkpoint,
+        output_dir=args.output_dir,
+        n_timing_repeats=args.repeats,
+    )
     campaign.run_benchmark()
 
 

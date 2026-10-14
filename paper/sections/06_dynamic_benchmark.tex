@@ -1,218 +1,149 @@
-Dopo aver verificato separatamente i singoli componenti metodologici, il presente capitolo considera la pipeline GDM nella sua configurazione completa mediante un esperimento dinamico end-to-end. L'obiettivo è valutare il comportamento del framework quando il mesh mover neurale, il \textit{Safety Filter}, il solutore FEM e il meccanismo di evoluzione o trasferimento della mesh operano congiuntamente durante l'integrazione temporale della PDE.
+Dopo aver verificato separatamente i singoli componenti metodologici nel Capitolo~\ref{sec:diagnostics}, il presente capitolo valuta la pipeline GDM nella sua configurazione completa mediante due campagne dinamiche complementari sul benchmark transiente di convezione--diffusione. L'obiettivo è quantificare congiuntamente l'accuratezza della soluzione numerica, il costo computazionale algoritmico e la robustezza geometrica della discretizzazione quando il mesh mover neurale, il \textit{Deterministic Safety Filter}, il solutore agli elementi finiti e il meccanismo di gestione della griglia mobile operano sull'intero orizzonte temporale $[0,T]$.
 
-Il confronto finale è organizzato attorno a tre aspetti distinti ma strettamente correlati: accuratezza della soluzione numerica, costo computazionale complessivo e robustezza geometrica della discretizzazione. In particolare, viene confrontato il riferimento a mesh fissa con differenti strategie di gestione della mesh mobile basate sul medesimo modello GNN: il remapping pointwise $P_1$, la proiezione $L^2$ e la formulazione ALE continua. L'obiettivo non è stabilire una superiorità assoluta di una singola configurazione, ma quantificare il compromesso tra accuratezza, costo e gestione della mesh associato ai differenti meccanismi di accoppiamento.
-
-\subsection{Configurazione del benchmark e baseline di confronto}
+\subsection{Configurazione del benchmark e protocolli sperimentali}
 
 \label{subsec:benchmark_setup}
 
-La campagna di valutazione dinamica end-to-end adotta la configurazione fisica di convezione--diffusione e la Manufactured Solution analitica $u^\star(\mathbf{x},t)$ definite nella Sezione~\ref{subsec:pde_governing}, operando sul dominio $\Omega=[0,1]^2$ fino all'istante finale $T=0.5$, con
+La valutazione adotta la PDE di convezione--diffusione e la Manufactured Solution analitica $u^\star(\mathbf{x},t)$ definite nella Sezione~\ref{subsec:pde_governing}, operando sul dominio $\Omega=[0,1]^2$ fino all'istante finale $T=0.5$, con velocità convettiva $\mathbf{b}=(0.4,0.2)^T$ e diffusività $\nu=10^{-3}$. La triangolazione iniziale è uniforme a risoluzione $32\times32$ ($N=1089$ nodi, $M=2048$ elementi triangolari $P_1$). L'integrazione temporale utilizza il passo costante $\Delta t=5\times10^{-3}$ per $N_t=100$ passi complessivi, con finestra di adattamento di $N_a=10$ passi ($10$ finestre di adattamento distribuite agli istanti $t_w \in \{0.00, 0.05, \ldots, 0.45\}$). Il vincolo di validità geometrica del Safety Filter è fissato a $\epsilon=10^{-4}$ con margine $\delta_{\mathrm{margin}}=10^{-6}$.
 
-\[
-\mathbf{b}=(0.4,0.2)^T,
-\qquad
-\nu=10^{-3}.
-\]
-
-La triangolazione di partenza è uniforme a risoluzione $32\times32$, corrispondente a $N=1089$ nodi e $M=2048$ elementi triangolari $P_1$. L'integrazione temporale utilizza lo schema Backward Euler con passo costante
-
-\[
-\Delta t=5\times10^{-3},
-\]
-
-su un totale di $100$ passi temporali. L'aggiornamento della configurazione geometrica viene effettuato ogni $N_a=10$ passi.
-
-A ciascun evento di adattamento, la MeshMover GNN riceve lo stato FEM disponibile durante la simulazione e produce uno spostamento nodale. Lo spostamento viene quindi sottoposto al Deterministic Safety Filter, introdotto nella Sezione~\ref{subsec:safety_filter}, che verifica l'ammissibilità della traiettoria lineare della mesh rispetto alla soglia
-
-\[
-\epsilon=10^{-4}.
-\]
-
-Tale controllo è applicato secondo le ipotesi geometriche definite nel Capitolo~\ref{sec:gdm_framework} e non viene interpretato come una proprietà generale indipendente dalla discretizzazione considerata.
-
-Per il benchmark finale vengono confrontate quattro configurazioni:
+Vengono messe a confronto cinque configurazioni numeriche, riassunte in Tabella~\ref{tab:final_baselines}:
 
 \begin{table}[htbp]
 \centering
 \small
-\setlength{\tabcolsep}{3pt}
-\caption{Configurazioni considerate nel benchmark dinamico finale.}
+\setlength{\tabcolsep}{3.5pt}
+\caption{Configurazioni considerate nel benchmark dinamico dello Stage C.}
 \label{tab:final_baselines}
 \begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lcccc@{}}
 \toprule
 Configurazione &
 \begin{tabular}[c]{@{}c@{}}Mesh\\ mobile\end{tabular} &
-GNN &
+\begin{tabular}[c]{@{}c@{}}Generatore\\ target\end{tabular} &
 \begin{tabular}[c]{@{}c@{}}Trasferimento\\ dello stato\end{tabular} &
-ALE \\
+\begin{tabular}[c]{@{}c@{}}Evoluzione\\ ALE\end{tabular} \\
 \midrule
-Fixed FEM   & No  & No  & --                & No \\
-GDM + $P_1$ & Sì  & Sì  & $P_1$ pointwise   & No \\
-GDM + $L^2$ & Sì  & Sì  & Proiezione $L^2$  & No \\
-GDM + ALE   & Sì  & Sì  & Nessuno           & Sì \\
+Fixed FEM (C0)     & No  & --      & --                & No \\
+GDM + $P_1$ (C1)   & Sì  & GNN     & $P_1$ pointwise   & No \\
+GDM + $L^2$ (C2)   & Sì  & GNN     & Proiezione $L^2$  & No \\
+GDM + ALE (C3)     & Sì  & GNN     & Nessuno           & Sì \\
+Oracle + ALE (C4)  & Sì  & L-BFGS-B & Nessuno          & Sì \\
 \bottomrule
 \end{tabular*}
 \end{table}
 
-La configurazione \textit{Fixed FEM} costituisce il riferimento Euleriano e permette di quantificare l'errore ottenuto senza alcun movimento della mesh. La configurazione \textit{GDM + $P_1$} rappresenta l'accoppiamento con il remapping pointwise barycentrico, già analizzato nelle prove dello Stage B. La configurazione \textit{GDM + $L^2$} sostituisce il trasferimento pointwise con la proiezione globale introdotta nella Sezione~\ref{subsec:l2_projection}. Infine, \textit{GDM + ALE} elimina il trasferimento esplicito dello stato e incorpora il moto della mesh direttamente nella formulazione della PDE attraverso la velocità relativa.
+Per separare rigorosamente l'effetto del meccanismo numerico di gestione del movimento griglia (remapping discreto rispetto all'evoluzione continua ALE) dall'effetto di retroazione dello stato $u_h$ sugli input della GNN, il benchmark è articolato in due protocolli:
 
-Il modello neurale impiegato è identico per tutte le configurazioni basate sulla GNN e corrisponde al checkpoint addestrato offline nello Stage A, senza fine-tuning specifico per il problema transiente.
-
-Per rendere il confronto tra $L^2$ e ALE il più possibile controllato, viene utilizzata la medesima sequenza temporale di configurazioni geometriche target prodotte dalla GNN. Questo protocollo deve tuttavia essere distinto dalla traiettoria calcolata direttamente durante la campagna dinamica dello Stage B: i target vengono prescritti agli istanti di adattamento e successivamente riutilizzati nel confronto finale. Nel caso $L^2$, la mesh viene portata direttamente alla configurazione target e lo stato viene trasferito mediante proiezione; nel caso ALE, lo stesso spostamento viene distribuito sui successivi $N_a$ passi e trasformato nella velocità di mesh
-
-\[
-\mathbf{w}
-=
-\frac{\Delta\mathbf{X}_{\mathrm{safe}}}
-{N_a\Delta t}.
-\]
-
-La differenza tra i due protocolli è quindi intenzionale e consente di confrontare principalmente il meccanismo di gestione del moto della mesh, senza introdurre variazioni nel modello neurale o nella sequenza dei target geometrici.
-
-È inoltre importante notare che i valori ottenuti in questo benchmark finale non coincidono necessariamente con quelli riportati nella diagnostica dinamica dello Stage B. In particolare, il protocollo di replay dei target geometrici adottato nel presente capitolo non coincide punto per punto con la traiettoria numerica generata nel corso della precedente campagna dinamica; i risultati devono pertanto essere confrontati all'interno del rispettivo protocollo sperimentale.
+\begin{enumerate}
+    \item \textbf{Esperimento A (Replay controllato a target condivisi)}: la sequenza di $10$ configurazioni geometriche target generata dalla GNN agli istanti di inizio finestra $t_w$ viene registrata e fornita identica alle tre pipeline basate su GNN (\textit{GDM + $P_1$}, \textit{GDM + $L^2$} e \textit{GDM + ALE}). Nelle configurazioni con remapping, la mesh salta istantaneamente alla configurazione target all'inizio della finestra e lo stato viene trasferito mediante $\mathcal{R}_{P_1}$ o proiezione $L^2$; nella configurazione ALE, il medesimo spostamento certificato $\Delta\mathbf{X}_{\mathrm{safe}}$ viene distribuito linearmente sui successivi $N_a$ passi con velocità costante a tratti $\mathbf{w} = \Delta\mathbf{X}_{\mathrm{safe}}/(N_a\Delta t)$.
+    \item \textbf{Esperimento B (Confronto end-to-end in closed-loop)}: ciascuna configurazione evolve in modo completamente autonomo, calcolando a ogni inizio finestra il gradiente nodale FEM $\nabla u_h$ dalla propria soluzione numerica corrente e interrogando online la GNN (o l'ottimizzatore variazionale nel caso \textit{Oracle + ALE}).
+\end{enumerate}
 
 \subsection{Accuratezza della PDE ed evoluzione temporale dell'errore}
 
 \label{subsec:error_dynamics}
 
-La prima metrica considerata è l'errore relativo in norma $L^2$ rispetto alla soluzione manufactured,
+L'accuratezza viene quantificata a ogni passo temporale tramite l'errore relativo continuo in norma $L^2(\Omega)$ valutato con quadratura di Dunavant di grado 5:
 
 \begin{equation}
 E_{L^2}(t)
 =
 \frac{
-\|u_h(\cdot,t)-u_{\mathrm{exact}}(\cdot,t)\|_{L^2(\Omega)}
+\|u_h(\cdot,t)-u^\star(\cdot,t)\|_{L^2(\Omega)}
 }{
-\|u_{\mathrm{exact}}(\cdot,t)\|_{L^2(\Omega)}
+\|u^\star(\cdot,t)\|_{L^2(\Omega)}
 },
-\label{eq:final_l2_error}
-\end{equation}
-
-calcolato a ogni passo temporale. Oltre al valore finale $E_{L^2}(T)$, viene considerato l'errore integrato nel tempo,
-
-\begin{equation}
+\qquad
 \overline{E}_{L^2}
 =
 \frac{1}{T}
 \int_0^T
-E_{L^2}(t)\,dt,
-\label{eq:final_integrated_error}
+E_{L^2}(t)\,dt.
+\label{eq:final_l2_metrics}
 \end{equation}
 
-approssimato numericamente sulla griglia temporale del benchmark.
+I risultati dei due esperimenti sono riportati nella Tabella~\ref{tab:final_accuracy}.
 
-Il valore finale misura la precisione raggiunta al termine della simulazione, mentre l'errore integrato nel tempo sintetizza il comportamento complessivo della soluzione e permette di evidenziare eventuali perturbazioni associate agli eventi di adattamento.
-
-\begin{table}[htbp]
+\begin{table*}[htbp]
 \centering
-\caption{Accuratezza globale nel benchmark dinamico finale. I valori sono espressi come percentuale dell'errore relativo $L^2$.}
+\small
+\setlength{\tabcolsep}{4.5pt}
+\caption{Confronto dell'accuratezza PDE e del minimo determinante Jacobiano nell'Esperimento A (Target Replay condiviso) e nell'Esperimento B (Closed-Loop autonomo).}
 \label{tab:final_accuracy}
-\begin{tabular}{lcc}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lcccccc@{}}
 \toprule
-Configurazione
-& $E_{L^2}(T)$ [\%]
-& $\overline{E}_{L^2}$ [\%]
-\\
+& \multicolumn{3}{c}{Esperimento A (Target Replay)} & \multicolumn{3}{c}{Esperimento B (Closed-Loop)} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+Configurazione & $E_{L^2}(T)$ & $\overline{E}_{L^2}$ & $\min_{t,e} J_e$ & $E_{L^2}(T)$ & $\overline{E}_{L^2}$ & $\min_{t,e} J_e$ \\
 \midrule
-Fixed FEM
-& 9.03
-& 7.96
-\\
-GDM + $P_1$
-& 12.72
-& 10.32
-\\
-GDM + $L^2$
-& 8.92
-& 7.87
-\\
-GDM + ALE
-& 9.47
-& 8.27
-\\
+Fixed FEM (C0)    & $9.03\%$  & $7.96\%$  & $9.77\times10^{-4}$ & $9.03\%$  & $7.96\%$  & $9.77\times10^{-4}$ \\
+GDM + $P_1$ (C1)  & $12.54\%$ & $10.50\%$ & $6.63\times10^{-4}$ & $12.62\%$ & $10.53\%$ & $6.56\times10^{-4}$ \\
+GDM + $L^2$ (C2)  & $9.11\%$  & $7.97\%$  & $6.63\times10^{-4}$ & $9.11\%$  & $7.97\%$  & $6.58\times10^{-4}$ \\
+GDM + ALE (C3)    & $9.45\%$  & $8.26\%$  & $6.63\times10^{-4}$ & $9.45\%$  & $8.26\%$  & $6.63\times10^{-4}$ \\
+Oracle + ALE (C4) & --        & --        & --                  & $9.23\%$  & $7.74\%$  & $2.90\times10^{-4}$ \\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabular*}
+\end{table*}
 
-Il confronto mostra innanzitutto una differenza netta tra i due meccanismi di trasferimento esplicito considerati. La configurazione GDM + $P_1$ raggiunge un errore finale del $12.72\%$ e un errore integrato del $10.32\%$, superiori ai corrispondenti valori della mesh fissa. Il risultato è coerente con la diagnostica dello Stage B, nella quale l'applicazione reiterata del remapping pointwise aveva evidenziato un accumulo dell'errore di trasferimento.
+I dati della Tabella~\ref{tab:final_accuracy} mostrano una notevole coerenza tra il protocollo a target condivisi (Esperimento A) e quello in ciclo chiuso (Esperimento B):
 
-La sostituzione del remapping pointwise con la proiezione $L^2$ porta invece a un errore finale dell'$8.92\%$ e a un errore integrato del $7.87\%$. Nel protocollo considerato, questi valori risultano molto vicini a quelli della mesh fissa, con una differenza rispettivamente di circa $0.11$ e $0.09$ punti percentuali. Il risultato indica che la proiezione globale riduce il contributo del trasferimento osservato con il remapping pointwise, senza tuttavia implicare che il movimento della mesh renda in generale la discretizzazione più accurata della baseline fissa.
+\begin{itemize}
+    \item \textbf{Degrado da remapping pointwise ($P_1$)}: la configurazione \textit{GDM + $P_1$} registra l'errore più elevato in entrambi i protocolli ($12.54\%$ finale in replay e $12.62\%$ in closed-loop, con errore integrato superiore al $10.5\%$), confermando che l'accumulo dissipativo dell'interpolazione baricentrica degrada la soluzione ben oltre il riferimento a griglia fissa.
+    \item \textbf{Confronto tra proiezione $L^2$ e formulazione ALE}: a parità esatta di target geometrici (Esperimento A) così come in esecuzione autonoma (Esperimento B), la proiezione variazionale $L^2$ ottiene un errore finale del $9.11\%$ e un errore integrato del $7.97\%$, allineandosi alla baseline fissa ($9.03\%$ e $7.96\%$). La formulazione conservativa \textit{GDM + ALE} raggiunge un errore finale del $9.45\%$ e un errore integrato dell'$8.26\%$, mantenendo uno scarto contenuto in $0.34$ punti percentuali sul valore finale e $0.29$ punti percentuali sull'integrale temporale rispetto alla proiezione $L^2$, senza eseguire alcuna operazione di remapping.
+    \item \textbf{Riferimento variazionale ALE (\textit{Oracle + ALE})}: l'accoppiamento dello stesso solutore ALE con i target generati dall'ottimizzatore variazionale riduce l'errore integrato nel tempo al $7.74\%$ (inferiore al $7.96\%$ della mesh fissa), dimostrando che la formulazione ALE conservativa è in grado di tradurre una maggiore concentrazione locale dei nodi ($\min J_e = 2.90\times10^{-4}$) in una riduzione dell'errore globale medio.
+\end{itemize}
 
-La formulazione GDM + ALE raggiunge invece un errore finale del $9.47\%$ e un errore integrato dell'$8.27\%$. Rispetto alla proiezione $L^2$, lo scostamento è pari a circa $0.55$ punti percentuali sul valore finale e $0.40$ punti percentuali sul valore integrato. In questo benchmark, quindi, la formulazione ALE conserva un livello di accuratezza comparabile ma leggermente inferiore a quello ottenuto con la proiezione $L^2$.
-
-L'evoluzione temporale dell'errore riportata in Figura~\ref{fig:final_error_dynamics} permette di osservare ulteriormente la differenza tra le strategie di accoppiamento.
+L'evoluzione temporale dell'errore relativo $E_{L^2}(t)$ nell'Esperimento B è illustrata nella Figura~\ref{fig:final_error_dynamics}.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.92\linewidth]{images/stage_b/fig3_dynamic_pde_error.png}
-\caption{Evoluzione temporale dell'errore relativo $L^2$ nelle configurazioni dinamiche considerate.}
+\includegraphics[width=0.92\linewidth]{images/stage_c/fig_c3_dynamic_error.png}
+\caption{Evoluzione temporale dell'errore relativo continuo $L^2$ nelle cinque configurazioni dinamiche del benchmark end-to-end (Esperimento B).}
 \label{fig:final_error_dynamics}
 \end{figure}
 
-La curva associata al remapping $P_1$ evidenzia una crescita dell'errore compatibile con l'accumulo del contributo introdotto dai trasferimenti successivi. Nel caso della proiezione $L^2$, l'errore rimane invece più vicino a quello della mesh fissa, sebbene siano osservabili variazioni localizzate in corrispondenza degli eventi di trasferimento.
-
-La formulazione ALE presenta un'evoluzione temporale più regolare, poiché il cambiamento geometrico viene distribuito nel tempo e non richiede una fase separata di riproiezione dello stato. Il prezzo di tale continuità è, nel benchmark considerato, un errore leggermente superiore alla configurazione con proiezione $L^2$.
-
-Nel complesso, il confronto conferma che la scelta del meccanismo di accoppiamento tra mesh mobile e stato fisico costituisce una componente determinante del comportamento end-to-end. La qualità della geometria prodotta dalla GNN non è quindi sufficiente, da sola, a caratterizzare la precisione della simulazione.
-
-\subsection{Costo computazionale e scomposizione del runtime}
+\subsection{Costo computazionale algoritmico e analisi dello speedup}
 
 \label{subsec:runtime_analysis}
 
-L'accuratezza viene valutata congiuntamente al costo computazionale introdotto dall'adattamento. Il tempo totale di simulazione può essere scomposto concettualmente come
+Per garantire un confronto prestazionale rigoroso e privo di distorsioni, il cronometro algoritmico misura esclusivamente le operazioni effettive del solutore numerico e del modulo di adattamento (mediana su ripetizioni indipendenti dopo warm-up), scorporando completamente la valutazione delle metriche diagnostiche di errore MMS e di qualità geometrica:
 
 \begin{equation}
 T_{\mathrm{total}}
 =
-T_{\mathrm{FEM}}
+T_{\mathrm{FEM/ALE}}
 +
-T_{\mathrm{GNN}}
+T_{\mathrm{Adapt}}
 +
-T_{\mathrm{Safety}}
-+
-T_{\mathrm{Remap}}
-+
-T_{\mathrm{other}},
+T_{\mathrm{Remap}},
 \label{eq:runtime_decomposition}
 \end{equation}
 
-dove $T_{\mathrm{FEM}}$ rappresenta il costo associato all'assemblaggio e alla soluzione del sistema FEM, $T_{\mathrm{GNN}}$ il costo di inferenza del mesh mover, $T_{\mathrm{Safety}}$ il costo del filtro geometrico e $T_{\mathrm{Remap}}$ il costo dell'eventuale trasferimento esplicito dello stato.
+dove $T_{\mathrm{FEM/ALE}}$ comprende l'assemblaggio delle matrici e la risoluzione del sistema lineare a ogni passo temporale, $T_{\mathrm{Adapt}} = T_{\mathrm{GNN/Oracle}} + T_{\mathrm{Safety}}$ misura la ricostruzione del gradiente nodale, l'inferenza del mesh mover e il filtraggio geometrico $\mathcal{O}(M)$, mentre $T_{\mathrm{Remap}}$ misura il trasferimento esplicito dello stato. La scomposizione dei tempi è riportata in Tabella~\ref{tab:final_runtime_table} e visualizzata in Figura~\ref{fig:final_runtime}.
 
-Per la formulazione ALE, il termine $T_{\mathrm{Remap}}$ è assente dalla pipeline, poiché lo stato non viene proiettato esplicitamente tra due configurazioni successive. Restano naturalmente i costi associati all'aggiornamento della geometria, al calcolo della velocità di mesh e alla costruzione degli operatori FEM sulla configurazione corrente.
+\begin{table*}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4.5pt}
+\caption{Scomposizione del tempo di calcolo algoritmico su $100$ passi temporali (Esperimento B, mediana su CPU).}
+\label{tab:final_runtime_table}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lccccc@{}}
+\toprule
+Configurazione & $T_{\mathrm{FEM/ALE}}$ [s] & $T_{\mathrm{Remap}}$ [s] & $T_{\mathrm{Adapt}}$ [s] & $T_{\mathrm{total}}$ [s] & Speedup vs $L^2$ \\
+\midrule
+Fixed FEM (C0)    & $0.732$ & $0.000$  & $0.000$ & $0.732$  & $16.92\times$ \\
+GDM + $P_1$ (C1)  & $0.766$ & $0.293$  & $0.529$ & $1.589$  & $7.80\times$  \\
+GDM + $L^2$ (C2)  & $0.755$ & $11.153$ & $0.516$ & $12.387$ & $1.00\times$  \\
+GDM + ALE (C3)    & $1.747$ & $0.000$  & $0.479$ & $2.226$  & $\mathbf{5.56\times}$ \\
+\bottomrule
+\end{tabular*}
+\end{table*}
 
-Nel benchmark transiente unificato a $100$ passi temporali, la configurazione GDM + $L^2$ registra un tempo di esecuzione totale pari a
+Nella configurazione \textit{GDM + $L^2$}, la proiezione variazionale dello stato richiede $T_{\mathrm{Remap}}^{L^2} = 11.153\ \mathrm{s}$ su un tempo totale di $T_{\mathrm{total}}^{L^2} = 12.387\ \mathrm{s}$, assorbendo esattamente il $90.0\%$ dell'intero costo computazionale della simulazione a causa della localizzazione geometrica dei punti di quadratura di Dunavant sulla mesh precedente e della risoluzione del sistema della matrice di massa.
 
-\begin{equation}
-\begin{aligned}
-T_{\mathrm{total}}^{L^2}
-&=
-4.18\ \mathrm{s},
-\\
-T_{\mathrm{Remap}}^{L^2}
-&=
-3.35\ \mathrm{s},
-\end{aligned}
-\label{eq:runtime_l2}
-\end{equation}
-
-con il trasferimento dello stato che rappresenta circa l'$80.1\%$ del tempo totale della pipeline in questo benchmark.
-
-La formulazione GDM + ALE completa invece la simulazione in
-
-\begin{equation}
-T_{\mathrm{total}}^{\mathrm{ALE}}
-=
-1.76\ \mathrm{s},
-\qquad
-T_{\mathrm{Remap}}^{\mathrm{ALE}}
-\equiv 0.
-\label{eq:runtime_ale}
-\end{equation}
-
-Il rapporto tra i tempi complessivi definisce lo speedup operativo della formulazione ALE rispetto alla configurazione con proiezione $L^2$:
+La formulazione \textit{GDM + ALE} azzera integralmente il termine di remapping ($T_{\mathrm{Remap}}^{\mathrm{ALE}} \equiv 0$). Pur richiedendo il riassemblaggio delle matrici FEM--ALE ad ogni passo sulla geometria deformante ($T_{\mathrm{FEM/ALE}} = 1.747\ \mathrm{s}$ contro $0.755\ \mathrm{s}$), il tempo totale scende a $T_{\mathrm{total}}^{\mathrm{ALE}} = 2.226\ \mathrm{s}$ ($2.192\ \mathrm{s}$ nel protocollo di replay), determinando uno speedup operativo netto rispetto a \textit{GDM + $L^2$} pari a:
 
 \begin{equation}
-S_{\mathrm{ALE}}
+S_{\mathrm{ALE}\text{ vs }L^2}
 =
 \frac{
 T_{\mathrm{total}}^{L^2}
@@ -220,74 +151,50 @@ T_{\mathrm{total}}^{L^2}
 T_{\mathrm{total}}^{\mathrm{ALE}}
 }
 =
-\frac{4.18\ \mathrm{s}}{1.76\ \mathrm{s}}
+\frac{12.387\ \mathrm{s}}{2.226\ \mathrm{s}}
 \approx
-2.37\times.
+5.56\times
+\quad
+(5.60\times\text{ in Esperimento A}).
 \label{eq:ale_speedup}
 \end{equation}
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.90\linewidth]{images/stage_c/fig_c5_runtime_decomposition.png}
-\caption{Confronto del costo computazionale tra la strategia con proiezione $L^2$ e la formulazione ALE. Il benchmark mostra uno speedup complessivo di $2.37\times$ per la configurazione ALE.}
+\caption{Scomposizione algoritmica del tempo di esecuzione (in scala logaritmica) per le configurazioni dinamiche dello Stage C.}
 \label{fig:final_runtime}
 \end{figure}
-
-Il risultato evidenzia che, nel caso considerato, il costo della proiezione dello stato costituisce la componente dominante della pipeline con remapping $L^2$. La formulazione ALE elimina tale operazione separata e riduce il tempo complessivo di simulazione da $4.18$ s a $1.76$ s.
-
-Lo speedup osservato deve tuttavia essere interpretato come un risultato sperimentale specifico del benchmark e non come una stima asintotica generale della convenienza dell'ALE. Esso dipende infatti dalla frequenza di adattamento, dal costo della proiezione, dalla dimensione della discretizzazione e dall'implementazione del solutore.
 
 \subsection{Robustezza geometrica e tracking dinamico della mesh}
 
 \label{subsec:geometric_robustness}
 
-La validazione conclusiva riguarda la qualità geometrica della triangolazione lungo l'intera sequenza temporale. A differenza dello stress test isolato condotto nello Stage A, nel quale la rete veniva volutamente sottoposta a spostamenti amplificati, in questa sezione viene considerato il regime nominale della simulazione dinamica.
-
-Durante l'intera simulazione di $100$ passi temporali, utilizzando il gradiente FEM ricostruito a runtime, il minimo determinante Jacobiano orientato osservato su tutti gli elementi è
+La verifica della qualità geometrica lungo i $100$ passi temporali conferma che tutte le configurazioni adattive mantengono determinanti Jacobiani strettamente superiori alla soglia di sicurezza $\epsilon=10^{-4}$ (Figura~\ref{fig:final_mesh_safety}). In particolare, per \textit{GDM + ALE} si osserva
 
 \begin{equation}
-\min_{t\in(0,T]}
+\min_{t\in[0,T]}
 \min_{e=1,\ldots,M}
 J_e(t)
-\approx
-6.59\times10^{-4}
+=
+6.63\times10^{-4}
 >
 \epsilon,
 \label{eq:final_min_j}
 \end{equation}
 
-con $\epsilon=10^{-4}$. Il valore iniziale della mesh indeformata è
-
-\[
-J_0=9.77\times10^{-4}.
-\]
-
-Nel benchmark nominale il fattore globale del Safety Filter rimane
-
-\[
-\alpha_{\mathrm{global}}(t)=1
-\]
-
-per tutte le finestre di adattamento. Ciò significa che le configurazioni previste dalla GNN risultano già ammissibili rispetto alla soglia geometrica e che il filtro non deve ridurre gli spostamenti.
-
-Questo risultato deve essere distinto dalla funzione di protezione verificata nello stress test dello Stage A: in quel caso il filtro veniva attivato intenzionalmente mediante amplificazione dello spostamento, mentre nel benchmark nominale non è stato necessario alcun intervento correttivo.
+a partire dal valore indeformato $J_0 = 9.77\times10^{-4}$, con $\alpha_{\mathrm{global}}(t) \equiv 1$ su tutte le finestre di adattamento.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.92\linewidth]{images/stage_b/fig4_mesh_safety_over_time.png}
-\caption{Evoluzione temporale del minimo determinante orientato $J_{\min}(t)$ durante la simulazione dinamica. La linea orizzontale rappresenta la soglia geometrica $\epsilon$.}
+\includegraphics[width=0.92\linewidth]{images/stage_c/fig_c4_mesh_validity.png}
+\caption{Evoluzione temporale del minimo determinante Jacobiano orientato $\min_e J_e(t)$ durante la simulazione dinamica nello Stage C.}
 \label{fig:final_mesh_safety}
 \end{figure}
 
-L'analisi di $J_{\min}(t)$ deve essere interpretata insieme all'evoluzione di $\alpha_{\mathrm{global}}(t)$ e agli istanti di adattamento. Un valore $\alpha_{\mathrm{global}}=1$ indica che la configurazione proposta è direttamente ammissibile; un valore inferiore a uno segnalerebbe invece l'attivazione del filtro e la conseguente contrazione dello spostamento.
-
-La proprietà osservata riguarda esclusivamente la validità geometrica della discretizzazione e non costituisce, di per sé, una proprietà di conservazione della soluzione PDE. La consistenza geometrica e il comportamento del trasferimento dello stato sono stati verificati separatamente nel Capitolo~\ref{sec:diagnostics} mediante i test di Stage B e Stage C.
-
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.90\linewidth]{images/stage_c/fig_c6_qualitative_tracking.png}
-\caption{Esempio qualitativo del tracking della struttura della soluzione durante l'evoluzione dinamica con mesh adattata.}
+\includegraphics[width=0.95\linewidth]{images/stage_c/fig_c6_qualitative_tracking.png}
+\caption{Tracciamento dinamico della struttura localizzata mobile e corrispondente evoluzione della soluzione $u_h(t)$ con la pipeline \textit{GDM + ALE}.}
 \label{fig:final_tracking}
 \end{figure}
-
-Nel complesso, il benchmark dinamico mostra che l'integrazione della GNN con il controllo geometrico deterministico mantiene una triangolazione ammissibile durante l'intera simulazione considerata. Nel regime nominale analizzato, il Safety Filter non altera la traiettoria predetta dalla GNN; il principale effetto della scelta tra remapping $L^2$ e formulazione ALE riguarda quindi il trattamento dello stato fisico e il conseguente compromesso tra accuratezza e costo computazionale.

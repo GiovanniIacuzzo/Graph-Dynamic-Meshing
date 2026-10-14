@@ -60,50 +60,243 @@ def test_l1_exactness():
 
 
 def test_l2_spatial_convergence():
-    """L2: Confronto della convergenza spaziale h: P1 Pointwise vs L2 Projection."""
+    """
+    L2: Confronto della convergenza spaziale tra P1 pointwise
+    e proiezione L2.
+
+    La metrica è la norma L2 relativa continua sul dominio,
+    integrata sulla nuova mesh mediante quadratura di grado 5.
+
+    Non viene utilizzata la norma euclidea dei soli valori nodali.
+    """
+
+    from numerics.fem import _get_triangle_quadrature_degree_5
+
     pde = ManufacturedConvectionDiffusion2D()
     t = 0.2
+
     resolutions = [16, 32, 64, 128]
     h_vals = [1.0 / n for n in resolutions]
 
     err_p1_list = []
     err_l2_list = []
 
+    # -------------------------------------------------------------
+    # Errore L2 relativo continuo
+    # -------------------------------------------------------------
+    def relative_continuous_l2_error(mesh, u_approx):
+        nodes = mesh.nodes
+        cells = mesh.cells
+
+        tri_pts = nodes[cells]
+
+        x1 = tri_pts[:, 0, 0]
+        y1 = tri_pts[:, 0, 1]
+
+        x2 = tri_pts[:, 1, 0]
+        y2 = tri_pts[:, 1, 1]
+
+        x3 = tri_pts[:, 2, 0]
+        y3 = tri_pts[:, 2, 1]
+
+        det_J = (
+            (x2 - x1) * (y3 - y1)
+            - (x3 - x1) * (y2 - y1)
+        )
+
+        if np.any(det_J <= 1e-14):
+            raise ValueError(
+                "Mesh non valida nel test di convergenza L2: "
+                "sono presenti elementi invertiti o degeneri."
+            )
+
+        areas = 0.5 * det_J
+        u_elem = u_approx[cells]
+
+        qp_ref, qw_ref = _get_triangle_quadrature_degree_5()
+
+        err_sq = 0.0
+        ref_sq = 0.0
+
+        for (xi, eta), w in zip(qp_ref, qw_ref):
+            phi1 = 1.0 - xi - eta
+            phi2 = xi
+            phi3 = eta
+
+            # Coordinate fisiche dei punti di quadratura.
+            xq = phi1 * x1 + phi2 * x2 + phi3 * x3
+            yq = phi1 * y1 + phi2 * y2 + phi3 * y3
+
+            # Soluzione analitica continua.
+            u_exact = pde.evaluate_solution(xq, yq, t)
+
+            # Interpolazione P1 della soluzione rimappata.
+            u_h = (
+                phi1 * u_elem[:, 0]
+                + phi2 * u_elem[:, 1]
+                + phi3 * u_elem[:, 2]
+            )
+
+            factor = 2.0 * w * areas
+
+            err_sq += np.sum(
+                factor * (u_h - u_exact) ** 2
+            )
+
+            ref_sq += np.sum(
+                factor * u_exact ** 2
+            )
+
+        if ref_sq <= 1e-14:
+            raise ValueError(
+                "Norma L2 della soluzione di riferimento "
+                "troppo piccola per calcolare l'errore relativo."
+            )
+
+        return float(
+            np.sqrt(max(err_sq, 0.0) / ref_sq)
+        )
+
+    # -------------------------------------------------------------
+    # Esperimenti su mesh progressivamente più fini
+    # -------------------------------------------------------------
     for n in resolutions:
         h = 1.0 / n
-        mesh = create_initial_mesh_2d({"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0}, nx=n, ny=n)
-        u_old = pde.evaluate_solution(mesh.nodes[:, 0], mesh.nodes[:, 1], t)
+
+        mesh = create_initial_mesh_2d(
+            {
+                "x_min": 0.0,
+                "x_max": 1.0,
+                "y_min": 0.0,
+                "y_max": 1.0,
+            },
+            nx=n,
+            ny=n,
+        )
+
+        u_old = pde.evaluate_solution(
+            mesh.nodes[:, 0],
+            mesh.nodes[:, 1],
+            t,
+        )
 
         disp = np.zeros_like(mesh.nodes)
         free_idx = _get_free_indices(mesh)
-        disp[free_idx, 0] = 0.25 * h * np.sin(np.pi * mesh.nodes[free_idx, 0])
-        disp[free_idx, 1] = 0.25 * h * np.cos(np.pi * mesh.nodes[free_idx, 1])
 
-        eps_h = min(1e-4, 0.05 * (h ** 2))
-        _, safe_nodes, is_safe, _ = apply_safety_filter(mesh.nodes, disp, mesh.cells, epsilon=eps_h)
-        assert is_safe
+        disp[free_idx, 0] = (
+            0.25 * h
+            * np.sin(np.pi * mesh.nodes[free_idx, 0])
+        )
 
-        u_p1 = remap_p1_solution(mesh.nodes, mesh.cells, u_old, safe_nodes)
-        u_l2 = remap_l2_projection(mesh.nodes, mesh.cells, u_old, safe_nodes, mesh.cells)
-        u_exact = pde.evaluate_solution(safe_nodes[:, 0], safe_nodes[:, 1], t)
+        disp[free_idx, 1] = (
+            0.25 * h
+            * np.cos(np.pi * mesh.nodes[free_idx, 1])
+        )
 
-        norm_ex = np.linalg.norm(u_exact)
-        err_p1_list.append(float(np.linalg.norm(u_p1 - u_exact) / norm_ex))
-        err_l2_list.append(float(np.linalg.norm(u_l2 - u_exact) / norm_ex))
+        eps_h = min(1e-4, 0.05 * h**2)
 
-    rates_p1 = [np.log(err_p1_list[i] / err_p1_list[i + 1]) / np.log(h_vals[i] / h_vals[i + 1]) for i in range(len(h_vals) - 1)]
-    rates_l2 = [np.log(err_l2_list[i] / err_l2_list[i + 1]) / np.log(h_vals[i] / h_vals[i + 1]) for i in range(len(h_vals) - 1)]
+        _, safe_nodes, is_safe, _ = apply_safety_filter(
+            mesh.nodes,
+            disp,
+            mesh.cells,
+            epsilon=eps_h,
+        )
 
-    print("\n" + "=" * 70)
-    print("L2 — SPATIAL CONVERGENCE: P1 POINTWISE vs L2 PROJECTION")
-    print("=" * 70)
-    print(f"{'Mesh':<10} {'h':<10} {'P1 L2 Error':<14} {'p(P1)':<8} {'L2-Proj Error':<14} {'p(L2)':<8}")
-    print("-" * 70)
-    print(f"{'16x16':<10} {h_vals[0]:<10.4f} {err_p1_list[0]:<14.4e} {'-':<8} {err_l2_list[0]:<14.4e} {'-':<8}")
-    for k in range(len(rates_p1)):
-        name = f"{resolutions[k+1]}x{resolutions[k+1]}"
-        print(f"{name:<10} {h_vals[k+1]:<10.4f} {err_p1_list[k+1]:<14.4e} {rates_p1[k]:<8.2f} {err_l2_list[k+1]:<14.4e} {rates_l2[k]:<8.2f}")
+        assert is_safe, (
+            f"Safety filter fallito per la mesh {n}x{n}."
+        )
 
+        # Mesh geometrica di destinazione.
+        mesh_new = mesh.update_coordinates(safe_nodes)
+
+        # Remapping pointwise P1.
+        u_p1 = remap_p1_solution(
+            old_nodes=mesh.nodes,
+            old_cells=mesh.cells,
+            old_u=u_old,
+            new_nodes=safe_nodes,
+        )
+
+        # Proiezione L2 con integrazione sulle intersezioni.
+        u_l2 = remap_l2_projection(
+            old_nodes=mesh.nodes,
+            old_cells=mesh.cells,
+            old_u=u_old,
+            new_nodes=safe_nodes,
+            new_cells=mesh.cells,
+        )
+
+        # Errori L2 relativi continui, non errori nodali.
+        err_p1 = relative_continuous_l2_error(
+            mesh_new, u_p1
+        )
+
+        err_l2 = relative_continuous_l2_error(
+            mesh_new, u_l2
+        )
+
+        err_p1_list.append(err_p1)
+        err_l2_list.append(err_l2)
+
+    # -------------------------------------------------------------
+    # Calcolo dei ratei sperimentali
+    # -------------------------------------------------------------
+    rates_p1 = [
+        np.log(err_p1_list[i] / err_p1_list[i + 1])
+        / np.log(h_vals[i] / h_vals[i + 1])
+        for i in range(len(h_vals) - 1)
+    ]
+
+    rates_l2 = [
+        np.log(err_l2_list[i] / err_l2_list[i + 1])
+        / np.log(h_vals[i] / h_vals[i + 1])
+        for i in range(len(h_vals) - 1)
+    ]
+
+    print("\n" + "=" * 82)
+    print("L2 — CONTINUOUS SPATIAL CONVERGENCE: P1 vs L2 PROJECTION")
+    print("=" * 82)
+
+    print(
+        f"{'Mesh':<10} {'h':<10} "
+        f"{'P1 rel. L2':<15} {'p(P1)':<10} "
+        f"{'Proj. rel. L2':<17} {'p(Proj.)':<10}"
+    )
+
+    print("-" * 82)
+
+    for i, n in enumerate(resolutions):
+        rate_p1 = "-" if i == 0 else f"{rates_p1[i - 1]:.2f}"
+        rate_l2 = "-" if i == 0 else f"{rates_l2[i - 1]:.2f}"
+
+        print(
+            f"{n}x{n:<6} "
+            f"{h_vals[i]:<10.5f} "
+            f"{err_p1_list[i]:<15.6e} "
+            f"{rate_p1:<10} "
+            f"{err_l2_list[i]:<17.6e} "
+            f"{rate_l2:<10}"
+        )
+
+    # -------------------------------------------------------------
+    # Controlli minimi automatici
+    # -------------------------------------------------------------
+    for name, errors in [
+        ("P1 pointwise", err_p1_list),
+        ("L2 projection", err_l2_list),
+    ]:
+        assert np.all(np.isfinite(errors)), (
+            f"{name}: sono stati rilevati errori non finiti."
+        )
+
+        assert np.all(np.asarray(errors) > 0.0), (
+            f"{name}: errori nulli o non validi."
+        )
+
+        assert errors[-1] < errors[0], (
+            f"{name}: la mesh più fine non riduce "
+            "l'errore L2 rispetto alla mesh più grossolana."
+        )
 
 def test_l3_displacement_amplitude():
     """L3: Errore vs Displacement Amplitude: P1 vs L2 Projection."""

@@ -57,6 +57,8 @@ class OracleObjective:
         self.lambda_D = float(lambda_D)
         self.lambda_Q = float(lambda_Q)
         self.epsilon = float(epsilon)
+        self.optimization_jacobian_target = 3.0 * self.epsilon
+        self.optimization_penalty_weight = 1e7
 
         # Coordinate di Dirichlet prefissate sul bordo
         self.boundary_coords = self.initial_nodes[self.boundary_nodes].copy()
@@ -120,84 +122,360 @@ class OracleObjective:
 
             # Integrazione locale: (u_exact - u_interp)^2 * det(J_e) * weight
             point_err = (u_exact - u_interp) ** 2
-            total_err_sq += np.sum(point_err * jacobians * weight)
+            total_err_sq += np.sum(point_err * np.abs(jacobians) * weight)
 
         return float(total_err_sq)
 
+
+    @staticmethod
+    def _triangle_jacobian_gradients(
+        tri_coords: np.ndarray
+    ) -> np.ndarray:
+        """
+        Calcola le derivate del determinante Jacobiano rispetto
+        alle coordinate dei tre vertici di ciascun triangolo.
+
+        Args:
+            tri_coords: coordinate dei triangoli, shape [M, 3, 2].
+
+        Returns:
+            grad_j: shape [M, 3, 2].
+                    grad_j[e, i, d] = dJ_e / dX_{i,d}.
+        """
+        p1 = tri_coords[:, 0, :]
+        p2 = tri_coords[:, 1, :]
+        p3 = tri_coords[:, 2, :]
+
+        grad_j = np.empty(
+            (tri_coords.shape[0], 3, 2),
+            dtype=np.float64
+        )
+
+        # Derivate rispetto al primo vertice.
+        grad_j[:, 0, 0] = p2[:, 1] - p3[:, 1]
+        grad_j[:, 0, 1] = p3[:, 0] - p2[:, 0]
+
+        # Derivate rispetto al secondo vertice.
+        grad_j[:, 1, 0] = p3[:, 1] - p1[:, 1]
+        grad_j[:, 1, 1] = p1[:, 0] - p3[:, 0]
+
+        # Derivate rispetto al terzo vertice.
+        grad_j[:, 2, 0] = p1[:, 1] - p2[:, 1]
+        grad_j[:, 2, 1] = p2[:, 0] - p1[:, 0]
+
+        return grad_j
+
+
+    def _compute_interpolation_error_and_gradient(
+        self,
+        nodes: np.ndarray,
+        jacobians: np.ndarray
+    ) -> Tuple[float, np.ndarray]:
+        """
+        Calcola l'errore L2 quadratico integrato e il gradiente analitico.
+
+        Usa |J| per integrare anche configurazioni intermedie non ammissibili.
+        Per J > 0 coincide con il funzionale originale.
+        """
+        tri_coords = nodes[self.cells]
+
+        u_nodes, grad_u_nodes, _, _ = self.field.evaluate(
+            nodes[:, 0], nodes[:, 1]
+        )
+
+        u_tri_nodes = u_nodes[self.cells]
+        grad_u_tri_nodes = grad_u_nodes[self.cells]
+
+        grad_jacobians = self._triangle_jacobian_gradients(tri_coords)
+
+        jacobian_measure = np.abs(jacobians)
+        jacobian_sign = np.where(jacobians >= 0.0, 1.0, -1.0)
+        grad_measure_jacobians = (
+            grad_jacobians * jacobian_sign[:, None, None]
+        )
+
+        total_err_sq = 0.0
+        grad_local = np.zeros(
+            (self.num_cells, 3, 2), dtype=np.float64
+        )
+
+        for q_idx in range(3):
+            bary = self.quad_bary[q_idx]
+            weight = self.quad_weights[q_idx]
+
+            xq = (
+                bary[0] * tri_coords[:, 0, 0]
+                + bary[1] * tri_coords[:, 1, 0]
+                + bary[2] * tri_coords[:, 2, 0]
+            )
+            yq = (
+                bary[0] * tri_coords[:, 0, 1]
+                + bary[1] * tri_coords[:, 1, 1]
+                + bary[2] * tri_coords[:, 2, 1]
+            )
+
+            u_exact, grad_exact, _, _ = self.field.evaluate(xq, yq)
+
+            u_interp = (
+                bary[0] * u_tri_nodes[:, 0]
+                + bary[1] * u_tri_nodes[:, 1]
+                + bary[2] * u_tri_nodes[:, 2]
+            )
+
+            residual = u_exact - u_interp
+            residual_sq = residual**2
+
+            total_err_sq += np.sum(
+                residual_sq * jacobian_measure * weight
+            )
+
+            for local_i in range(3):
+                grad_residual = bary[local_i] * (
+                    grad_exact - grad_u_tri_nodes[:, local_i, :]
+                )
+
+                grad_local[:, local_i, :] += weight * (
+                    grad_measure_jacobians[:, local_i, :]
+                    * residual_sq[:, None]
+                    + 2.0
+                    * jacobian_measure[:, None]
+                    * residual[:, None]
+                    * grad_residual
+                )
+
+        grad_nodes = np.zeros_like(nodes, dtype=np.float64)
+
+        for local_i in range(3):
+            np.add.at(
+                grad_nodes,
+                self.cells[:, local_i],
+                grad_local[:, local_i, :]
+            )
+
+        return float(total_err_sq), grad_nodes
+
+    def value_and_gradient(
+        self,
+        nodes: np.ndarray
+    ) -> Tuple[float, np.ndarray]:
+        """
+        Restituisce il funzionale Oracle e il gradiente analitico.
+
+        Le configurazioni valide mantengono il funzionale originale.
+        Per le configurazioni intermedie non ammissibili viene utilizzata
+        una penalizzazione quadratica continua dei Jacobiani.
+        """
+        x_cand = np.asarray(nodes, dtype=np.float64)
+
+        if x_cand.ndim == 1:
+            if x_cand.size != 2 * self.num_nodes:
+                raise ValueError(
+                    "Il vettore nodale appiattito ha dimensione errata."
+                )
+            x_cand = x_cand.reshape(self.num_nodes, 2)
+
+        if x_cand.shape != (self.num_nodes, 2):
+            raise ValueError(
+                f"Shape nodi non valida: {x_cand.shape}; "
+                f"attesa {(self.num_nodes, 2)}."
+            )
+
+        if not np.all(np.isfinite(x_cand)):
+            raise ValueError("Le coordinate nodali contengono NaN o Inf.")
+
+        metrics = compute_mesh_metrics(x_cand, self.cells)
+        jacobians = metrics["jacobians"]
+        tri_coords = x_cand[self.cells]
+
+        # 1. Errore d'interpolazione e gradiente.
+        e_interp, grad_e = (
+            self._compute_interpolation_error_and_gradient(
+                x_cand, jacobians
+            )
+        )
+        e_tilde = e_interp / self.norm_E
+        grad_nodes = grad_e / self.norm_E
+
+        # 2. Penalizzazione dello spostamento.
+        displacement = x_cand - self.initial_nodes
+        num_nodes_safe = max(float(self.num_nodes), 1.0)
+
+        d_tilde = float(
+            np.sum(displacement**2) / num_nodes_safe
+        )
+
+        grad_nodes += (
+            2.0 * self.lambda_D / num_nodes_safe
+        ) * displacement
+
+        # 3. Penalizzazione della qualità di Escobar-Knupp.
+        p1 = tri_coords[:, 0, :]
+        p2 = tri_coords[:, 1, :]
+        p3 = tri_coords[:, 2, :]
+
+        sum_l_sq = (
+            np.sum((p2 - p1)**2, axis=1)
+            + np.sum((p3 - p2)**2, axis=1)
+            + np.sum((p1 - p3)**2, axis=1)
+        )
+        safe_sum_l_sq = np.maximum(sum_l_sq, 1e-14)
+
+        sqrt3_factor = 2.0 * np.sqrt(3.0)
+        eta_raw = sqrt3_factor * jacobians / safe_sum_l_sq
+
+        eta = metrics["escobar_quality"]
+        q_tilde = float(np.mean(1.0 - eta))
+
+        grad_jacobians = self._triangle_jacobian_gradients(
+            tri_coords
+        )
+
+        grad_sum_l_sq = np.empty_like(grad_jacobians)
+        grad_sum_l_sq[:, 0, :] = 2.0 * (
+            2.0 * p1 - p2 - p3
+        )
+        grad_sum_l_sq[:, 1, :] = 2.0 * (
+            2.0 * p2 - p1 - p3
+        )
+        grad_sum_l_sq[:, 2, :] = 2.0 * (
+            2.0 * p3 - p1 - p2
+        )
+
+        grad_eta = sqrt3_factor * (
+            grad_jacobians / safe_sum_l_sq[:, None, None]
+            - jacobians[:, None, None]
+            * grad_sum_l_sq
+            / safe_sum_l_sq[:, None, None]**2
+        )
+
+        active_eta = (eta_raw > 0.0) & (eta_raw < 1.0)
+        grad_eta *= active_eta[:, None, None]
+
+        quality_factor = (
+            -self.lambda_Q / max(float(self.num_cells), 1.0)
+        )
+
+        for local_i in range(3):
+            np.add.at(
+                grad_nodes,
+                self.cells[:, local_i],
+                quality_factor * grad_eta[:, local_i, :]
+            )
+
+        # 4. Penalizzazione quadratica continua delle violazioni.
+        penalty_weight = self.optimization_penalty_weight
+
+        violations = np.maximum(
+            0.0,
+            self.optimization_jacobian_target - jacobians
+        )
+
+        constraint_penalty = penalty_weight * float(
+            np.sum(violations**2)
+        )
+
+        for local_i in range(3):
+            local_grad = (
+                -2.0
+                * penalty_weight
+                * violations[:, None]
+                * grad_jacobians[:, local_i, :]
+            )
+
+            np.add.at(
+                grad_nodes,
+                self.cells[:, local_i],
+                local_grad
+            )
+
+        # 5. Funzionale totale.
+        total_objective = (
+            e_tilde
+            + self.lambda_D * d_tilde
+            + self.lambda_Q * q_tilde
+            + constraint_penalty
+        )
+
+        return float(total_objective), grad_nodes
+
     def evaluate(self, nodes: np.ndarray) -> Dict[str, Any]:
         """
-        Valuta la funzione obiettivo variazionale multi-obiettivo su una configurazione candidata X.
-
-        Input:
-            nodes: coordinate candidate X, shape [N, 2] oppure vettore appiattito [2*N], float64
-
-        Output:
-            Dizionario con metriche:
-                - total_objective     : valore scalare J(X)
-                - interpolation_error : errore L2 quadratico integrato E_interp
-                - movement_penalty    : termine quadratico normalizzato D_tilde
-                - quality_penalty     : metrica di distorsione geometrica normalizzata Q_tilde
-                - min_jacobian        : valore minimo riscontrato di J_e
-                - is_valid            : flag booleano (True se rispetta vincoli geometrici e di bordo)
+        Valuta il funzionale Oracle usando la stessa penalizzazione
+        geometrica di value_and_gradient().
         """
-        if nodes.ndim == 1:
-            x_cand = nodes.reshape((self.num_nodes, 2))
+        x_cand = np.asarray(nodes, dtype=np.float64)
+
+        if x_cand.ndim == 1:
+            if x_cand.size != 2 * self.num_nodes:
+                raise ValueError(
+                    "Il vettore nodale appiattito ha dimensione errata."
+                )
+            x_cand = x_cand.reshape(self.num_nodes, 2)
+
+        if x_cand.shape != (self.num_nodes, 2):
+            raise ValueError(
+                f"Shape nodi non valida: {x_cand.shape}; "
+                f"attesa {(self.num_nodes, 2)}."
+            )
+
+        if not np.all(np.isfinite(x_cand)):
+            raise ValueError("Le coordinate nodali contengono NaN o Inf.")
+
+        if self.boundary_nodes.size:
+            bnd_err = float(np.max(np.abs(
+                x_cand[self.boundary_nodes] - self.boundary_coords
+            )))
         else:
-            x_cand = nodes
+            bnd_err = 0.0
 
-        # 1. Verifica consistenza nodi di contorno
-        bnd_err = np.max(np.abs(x_cand[self.boundary_nodes] - self.boundary_coords))
-        is_boundary_preserved = bool(bnd_err < 1e-10)
+        boundary_preserved = bool(bnd_err < 1e-10)
 
-        # 2. Calcolo metriche geometriche
         metrics = compute_mesh_metrics(x_cand, self.cells)
         jacobians = metrics["jacobians"]
         min_j = float(np.min(jacobians))
 
-        # Se sono presenti elementi invertiti o sub-critici (J_e < epsilon), la configurazione non è ammissibile
-        if min_j < self.epsilon or not is_boundary_preserved:
-            # Penalizzazione asintotica con barriera quadratica per guidare solutori vincolati
-            barrier_penalty = 1e6 + 1e5 * np.sum(np.maximum(0.0, self.epsilon - jacobians) ** 2)
-            return {
-                "total_objective": float(barrier_penalty),
-                "interpolation_error": np.inf,
-                "movement_penalty": np.inf,
-                "quality_penalty": np.inf,
-                "min_jacobian": min_j,
-                "is_valid": False,
-            }
-
-        # 3. Calcolo termine di accuratezza normalizzato E_tilde
-        e_interp = self._compute_interpolation_error(x_cand, jacobians)
+        # 1. Errore d'interpolazione normalizzato.
+        e_interp = self._compute_interpolation_error(
+            x_cand, jacobians
+        )
         e_tilde = e_interp / self.norm_E
 
-        # 4. Calcolo termine cinematico di movimento normalizzato D_tilde
-        # Normalizzato rispetto al numero di nodi interni liberi N
-        disp = x_cand - self.initial_nodes
-        d_raw = float(np.sum(disp**2))
-        d_tilde = d_raw / max(float(self.num_nodes), 1.0)
+        # 2. Penalizzazione dello spostamento.
+        displacement = x_cand - self.initial_nodes
+        d_tilde = (
+            float(np.sum(displacement**2))
+            / max(float(self.num_nodes), 1.0)
+        )
 
-        # 5. Calcolo termine geometrico normalizzato Q_tilde
-        # Basato sulla metrica di Escobar-Knupp: eta_e in (0, 1]. eta_e = 1 indica triangolo ideale.
-        # Penalizziamo la deviazione dall'ideale: (1.0 - eta_e)
-        eta = metrics["escobar_quality"]
-        q_tilde = float(np.mean(1.0 - eta))
+        # 3. Penalizzazione della qualità geometrica.
+        q_tilde = float(np.mean(1.0 - metrics["escobar_quality"]))
 
-        # 6. Aggregazione del funzionale complessivo
-        total_obj = e_tilde + self.lambda_D * d_tilde + self.lambda_Q * q_tilde
+        # 4. Penalizzazione rafforzata coerente con il gradiente.
+        violations = np.maximum(
+            0.0,
+            self.optimization_jacobian_target - jacobians
+        )
+        constraint_penalty = self.optimization_penalty_weight * float(
+            np.sum(violations**2)
+        )
+
+        total_obj = (
+            e_tilde
+            + self.lambda_D * d_tilde
+            + self.lambda_Q * q_tilde
+            + constraint_penalty
+        )
+
+        is_valid = bool(
+            min_j >= self.epsilon and boundary_preserved
+        )
 
         return {
             "total_objective": float(total_obj),
             "interpolation_error": float(e_interp),
             "movement_penalty": float(d_tilde),
             "quality_penalty": float(q_tilde),
+            "constraint_penalty": float(constraint_penalty),
             "min_jacobian": min_j,
-            "is_valid": True,
+            "is_valid": is_valid,
         }
-
-    def __call__(self, nodes_flat: np.ndarray) -> float:
-        """
-        Interfaccia scalare continua diretta per librerie di ottimizzazione (es. scipy.optimize.minimize).
-        """
-        result = self.evaluate(nodes_flat)
-        return result["total_objective"]

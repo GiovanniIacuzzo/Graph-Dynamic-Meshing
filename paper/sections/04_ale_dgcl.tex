@@ -2,8 +2,7 @@ L'adattamento $r$ modifica la configurazione geometrica della discretizzazione s
 
 La presente sezione analizza questo problema secondo tre livelli successivi. In primo luogo viene formalizzato il remapping pointwise $P_1$ utilizzato come baseline e viene discusso il meccanismo attraverso cui l'applicazione reiterata dell'operatore di trasferimento può accumulare errore. In secondo luogo viene introdotta una proiezione globale in norma $L^2$, che fornisce un trasferimento variazionale dello stato e, nella formulazione continua, preserva l'integrale del campo. Infine viene formulata una strategia ALE nella quale il movimento della mesh viene trattato come un'evoluzione continua e rappresentato mediante una velocità di griglia, eliminando nella pipeline principale il trasferimento esplicito dello stato tra configurazioni successive.
 
-\subsection{Remapping pointwise $P_1$ e accumulo dell'errore}
-
+\subsection{Remapping pointwise \texorpdfstring{$P_1$}{P1} e accumulo dell'errore}
 \label{subsec:remap_dissipation}
 
 Siano
@@ -165,8 +164,7 @@ Su una mesh non strutturata generale non esiste inoltre un unico fattore scalare
 
 Questa osservazione motiva l'impiego di un operatore di trasferimento più accurato. Tuttavia, una maggiore accuratezza del remapping può comportare un incremento rilevante del costo computazionale.
 
-\subsection{Remapping globale mediante proiezione $L^2$}
-
+\subsection{Remapping globale mediante proiezione \texorpdfstring{$L^2$}{L2}}
 \label{subsec:l2_projection}
 
 Una strategia alternativa all'interpolazione nodale consiste nel ricostruire il campo sulla nuova mesh mediante una proiezione ortogonale in norma $L^2$. Tale approccio è strettamente collegato alla letteratura sul trasferimento conservativo tra mesh differenti e ai metodi di moving mesh \citep{zzhang2006moving,donea2004arbitrary}.
@@ -369,42 +367,27 @@ dove $(\mathbf{x}_{e,q},w_q)$ sono rispettivamente le coordinate fisiche e i pes
 
 L'operatore di proiezione $L^2$ sostituisce quindi la valutazione nodale locale con una formulazione variazionale globale. Come verrà documentato quantitativamente nella Sezione~\ref{subsec:stage_b_diagnostics}, tale maggiore accuratezza comporta un costo computazionale superiore, dovuto sia alla ricerca geometrica necessaria per l'integrazione del termine noto sia alla soluzione del sistema lineare associato alla nuova matrice di massa.
 
-\subsection{Formulazione Arbitrary Lagrangian--Eulerian (ALE)}
+\subsection{Formulazione Arbitrary Lagrangian--Eulerian (ALE) conservativa}
 
 \label{subsec:ale_formulation}
 
-L'alternativa al trasferimento esplicito dello stato consiste nel rappresentare il moto della discretizzazione come un'evoluzione continua della mesh. Tale impostazione conduce naturalmente alla formulazione Arbitrary Lagrangian--Eulerian (ALE), nella quale la configurazione spaziale viene descritta mediante una mappa tempo-dipendente tra coordinate di riferimento e coordinate fisiche \citep{hirt1974an,donea2004arbitrary}.
-
-Sia
-
-\[
-\widehat{\Omega}
-\]
-
-il dominio di riferimento e sia
+L'alternativa al trasferimento esplicito dello stato consiste nel rappresentare il moto della discretizzazione come un'evoluzione continua della mesh. Tale impostazione conduce alla formulazione Arbitrary Lagrangian--Eulerian (ALE), nella quale la configurazione spaziale viene descritta mediante una mappa tempo-dipendente invertibile tra il dominio di riferimento $\widehat{\Omega}$ e il dominio fisico $\Omega(t)$ \citep{hirt1974an,donea2004arbitrary}:
 
 \begin{equation}
 \mathbf{x}
 =
-\boldsymbol{\chi}(\widehat{\mathbf{x}},t)
-\label{eq:ale_mapping}
-\end{equation}
-
-la trasformazione che associa a ogni coordinata di riferimento $\widehat{\mathbf{x}}$ la posizione fisica del corrispondente punto della mesh.
-
-La velocità di mesh è definita come la derivata temporale della mappa mantenendo fissa la coordinata di riferimento:
-
-\begin{equation}
+\boldsymbol{\chi}(\widehat{\mathbf{x}},t),
+\qquad
 \mathbf{w}(\widehat{\mathbf{x}},t)
 =
 \left.
 \frac{\partial\mathbf{x}}
 {\partial t}
 \right|_{\widehat{\mathbf{x}}}.
-\label{eq:mesh_velocity_continuous}
+\label{eq:ale_mapping}
 \end{equation}
 
-Per una funzione scalare $u(\mathbf{x},t)$ vale la relazione cinematica
+Per una funzione scalare regolare $u(\mathbf{x},t)$ vale la relazione cinematica lagrangiana sulla griglia:
 
 \begin{equation}
 \left.
@@ -418,50 +401,77 @@ Per una funzione scalare $u(\mathbf{x},t)$ vale la relazione cinematica
 \label{eq:ale_chain_rule}
 \end{equation}
 
-Sostituendo \eqref{eq:ale_chain_rule} nella PDE \eqref{eq:governing_pde}, si ottiene la forma ALE
+Considerando funzioni di base agli elementi finiti mobili $\phi_i(\mathbf{x},t) = \allowbreak \widehat{\phi}_i(\boldsymbol{\chi}^{-1}(\mathbf{x},t))$, le quali sono solidali con i nodi della griglia ($\left.\partial\phi_i/\partial t\right|_{\widehat{\mathbf{x}}} = 0$), l'applicazione del Teorema del Trasporto di Reynolds su ciascun volume materiale associato alla mesh fornisce l'identità variazionale:
 
 \begin{equation}
-\left.
-\frac{\partial u}
-{\partial t}
-\right|_{\widehat{\mathbf{x}}}
+\begin{aligned}
+\frac{d}{dt}
+\int_{\Omega(t)}
+u_h\phi_i\,d\mathbf{x}
+&=
+\int_{\Omega(t)}
+\left(
+\left.\frac{\partial u_h}{\partial t}\right|_{\widehat{\mathbf{x}}}
 +
-(\mathbf{b}-\mathbf{w})\cdot\nabla u
--
-\nu\Delta u
-=
-f.
-\label{eq:ale_strong_form}
+u_h\nabla\cdot\mathbf{w}
+\right)
+\phi_i\,d\mathbf{x}
+\\
+&=
+\int_{\Omega(t)}
+\frac{\partial u_h}{\partial t}\phi_i\,d\mathbf{x}
++
+\int_{\Omega(t)}
+\nabla\cdot(\mathbf{w}u_h)\phi_i\,d\mathbf{x}.
+\end{aligned}
+\label{eq:reynolds_transport_fem}
 \end{equation}
 
-La velocità convettiva fisica $\mathbf{b}$ viene quindi sostituita, nella formulazione relativa alla mesh, dalla velocità
+Sostituendo il termine $\int_{\Omega(t)} (\partial u_h/\partial t)\phi_i\,d\mathbf{x}$ nella formulazione debole della PDE \eqref{eq:governing_pde}, si ottiene la formulazione semidiscreta ALE in forma conservativa \citep{farhat2001the,formaggia2004stability}:
 
 \begin{equation}
-\mathbf{b}_{\mathrm{rel}}
-=
-\mathbf{b}-\mathbf{w}.
-\label{eq:relative_velocity}
+\begin{aligned}
+\frac{d}{dt}
+\left[
+M(t)\mathbf{U}(t)
+\right]
+&+
+\left[
+C_{\mathrm{phys}}(t,\mathbf{b})
++
+C_{\mathrm{mesh}}(t,\mathbf{w})
++
+\nu K(t)
+\right]
+\mathbf{U}(t)
+\\
+&=
+\mathbf{F}(t),
+\end{aligned}
+\label{eq:ale_semidiscrete_conservative}
 \end{equation}
 
-Questa relazione rappresenta il passaggio dal paradigma di rilocazione discreta al paradigma ALE: il moto della mesh non viene più trattato come una successione di eventi separati che richiedono necessariamente un trasferimento esplicito dello stato, ma entra direttamente nell'operatore differenziale attraverso la velocità relativa.
+dove l'operatore cinematico di convezione di griglia $C_{\mathrm{mesh}}(t,\mathbf{w})$ racchiude sia il trasporto avvettivo relativo sia la dilatazione locale degli elementi:
+
+\begin{equation}
+\begin{aligned}
+\left[C_{\mathrm{mesh}}(t,\mathbf{w})\right]_{ij}
+&=
+-\int_{\Omega(t)}
+\phi_i\nabla\cdot(\mathbf{w}\phi_j)\,d\mathbf{x}
+\\
+&=
+-\int_{\Omega(t)}
+\phi_i(\mathbf{w}\cdot\nabla\phi_j)\,d\mathbf{x}
+-\int_{\Omega(t)}
+(\nabla\cdot\mathbf{w})\phi_i\phi_j\,d\mathbf{x}.
+\end{aligned}
+\label{eq:c_mesh_continuous_split}
+\end{equation}
 
 \paragraph{Moto continuo generato dai target GNN.}
 
-Nel framework GDM la GNN produce uno spostamento nodale associato a un target di adattamento. Indichiamo con
-
-\[
-\Delta\mathbf{X}^{\mathrm{GNN}}
-\]
-
-lo spostamento tra la configurazione corrente e quella target. Se il target viene applicato su una finestra temporale costituita da $N_a$ passi di integrazione, il movimento viene distribuito linearmente nell'intervallo.
-
-Indicando con
-
-\[
-\mathbf{X}^{n}
-\]
-
-la configurazione all'inizio della finestra, definiamo
+Nel framework GDM la GNN produce uno spostamento nodale certificato $\Delta\mathbf{X}_{\mathrm{safe}}$ all'inizio di ciascuna finestra di adattamento di ampiezza $N_a\Delta t$. Indicando con $\mathbf{X}^{n}$ la configurazione nodale all'inizio della finestra, la traiettoria intermedia viene parametrizzata linearmente sui successivi $N_a$ passi:
 
 \begin{equation}
 \mathbf{X}^{n+k}
@@ -469,13 +479,13 @@ la configurazione all'inizio della finestra, definiamo
 \mathbf{X}^{n}
 +
 \frac{k}{N_a}
-\Delta\mathbf{X}^{\mathrm{GNN}},
+\Delta\mathbf{X}_{\mathrm{safe}},
 \qquad
-k=0,\ldots,N_a.
+k=0,\ldots,N_a,
 \label{eq:continuous_mesh_motion}
 \end{equation}
 
-La conseguente velocità nodale discreta è
+cui corrisponde la velocità nodale discreta costante a tratti nella finestra:
 
 \begin{equation}
 \mathbf{W}^{n+\frac12}
@@ -489,143 +499,114 @@ N_a\Delta t
 }
 =
 \frac{
-\Delta\mathbf{X}^{\mathrm{GNN}}
+\Delta\mathbf{X}_{\mathrm{safe}}
 }{
 N_a\Delta t
 }.
 \label{eq:discrete_mesh_velocity}
 \end{equation}
 
-Il moto della mesh è quindi lineare a tratti all'interno di ciascuna finestra di adattamento, invece di essere applicato come un salto istantaneo. Tale costruzione permette di utilizzare lo spostamento predetto dalla GNN come input cinematico della formulazione ALE.
+\paragraph{Discretizzazione completamente discreta FEM--ALE.}
 
-Una conseguenza diretta è che la soluzione numerica rimane associata alla stessa famiglia di nodi della mesh computazionale durante l'evoluzione. Non viene quindi eseguita un'operazione esplicita del tipo
-
-\[
-u_h^n\in V_h^n
-\longrightarrow
-u_h^n\in V_h^{n+1}
-\]
-
-a ogni variazione intermedia della configurazione.
-
-\paragraph{Discretizzazione FEM--ALE utilizzata nel solver.}
-
-Indicando con $\phi_i^{n+1}$ le funzioni di base $P_1$ associate alla configurazione corrente $\mathcal{T}_h^{n+1}$, la discretizzazione della forma ALE \eqref{eq:ale_strong_form} con avanzamento temporale Backward Euler assume la forma
+Integrando \eqref{eq:ale_semidiscrete_conservative} sull'intervallo $[t^n,t^{n+1}]$ mediante lo schema implicito Backward Euler per i termini fisici e valutando l'operatore cinematico di griglia sulla configurazione intermedia $\mathbf{X}^{n+\frac12} = \allowbreak \frac{1}{2}(\mathbf{X}^n + \mathbf{X}^{n+1})$, si ottiene il sistema lineare completamente discreto:
 
 \begin{equation}
-\left[
+\begin{aligned}
+\Bigl[
 \frac{1}{\Delta t}M^{n+1}
 +
-C^{n+1}(\mathbf{b}-\mathbf{w})
+C_{\mathrm{mesh}}^{n+\frac12}(\mathbf{w}^{n+\frac12})
+&+
+C_{\mathrm{phys}}^{n+1}(\mathbf{b})
 +
 \nu K^{n+1}
-\right]
+\Bigr]
 \mathbf{U}^{n+1}
-=
-\frac{1}{\Delta t}M^{n+1}\mathbf{U}^{n}
+\\
+&=
+\frac{1}{\Delta t}M^{n}\mathbf{U}^{n}
 +
 \mathbf{F}^{n+1},
+\end{aligned}
 \label{eq:ale_fully_discrete}
 \end{equation}
 
-dove
+dove le matrici valutate a $t^{n+1}$ sono definite da
 
 \begin{equation}
+\begin{aligned}
 M_{ij}^{n+1}
-=
+&=
 \int_{\Omega^{n+1}}
 \phi_i^{n+1}\phi_j^{n+1}
 \,d\mathbf{x},
-\label{eq:ale_mass_matrix}
-\end{equation}
-
-\begin{equation}
+\\
 K_{ij}^{n+1}
-=
+&=
 \int_{\Omega^{n+1}}
-\nabla\phi_i^{n+1}
-\cdot
-\nabla\phi_j^{n+1}
+\nabla\phi_i^{n+1}\cdot\nabla\phi_j^{n+1}
 \,d\mathbf{x},
-\label{eq:ale_stiffness_matrix}
+\\
+\left[C_{\mathrm{phys}}^{n+1}(\mathbf{b})\right]_{ij}
+&=
+\int_{\Omega^{n+1}}
+\phi_i^{n+1}(\mathbf{b}\cdot\nabla\phi_j^{n+1})
+\,d\mathbf{x},
+\end{aligned}
+\label{eq:ale_matrices_np1}
 \end{equation}
 
-e
+mentre l'operatore cinematico di mesh sulla configurazione di midpoint $\Omega^{n+\frac12}$ è decomposto come
 
 \begin{equation}
-C_{ij}^{n+1}(\mathbf{b}-\mathbf{w})
+C_{\mathrm{mesh}}^{n+\frac12}(\mathbf{w}^{n+\frac12})
 =
-\int_{\Omega^{n+1}}
-\phi_i^{n+1}
-\left[
-(\mathbf{b}-\mathbf{w})
-\cdot
-\nabla\phi_j^{n+1}
-\right]
-\,d\mathbf{x}.
-\label{eq:ale_relative_convection}
+-C_{\mathrm{adv}}^{w,n+\frac12}
+-M_{\mathrm{div}}^{w,n+\frac12},
+\label{eq:c_mesh_discrete_split}
 \end{equation}
 
-La discretizzazione temporale considera quindi il termine precedente attraverso la matrice di massa associata alla configurazione corrente. Il moto della mesh entra direttamente nella matrice convettiva attraverso la velocità relativa $\mathbf{b}-\mathbf{w}$.
+con
 
-La differenza fondamentale rispetto alla procedura di remapping non risiede nell'eliminazione della dipendenza delle matrici dalla geometria, che permane, ma nel fatto che la variazione della configurazione viene incorporata direttamente nel passo PDE. In questa formulazione non è necessario risolvere, dopo ogni movimento della mesh, un problema separato di proiezione dello stato.
+\begin{equation}
+\begin{aligned}
+\left[C_{\mathrm{adv}}^{w,n+\frac12}\right]_{ij}
+&=
+\int_{\Omega^{n+\frac12}}
+\phi_i^{n+\frac12}
+\left(
+\mathbf{w}^{n+\frac12}\cdot\nabla\phi_j^{n+\frac12}
+\right)
+\,d\mathbf{x},
+\\
+\left[M_{\mathrm{div}}^{w,n+\frac12}\right]_{ij}
+&=
+\int_{\Omega^{n+\frac12}}
+\left(\nabla\cdot\mathbf{w}^{n+\frac12}\right)
+\phi_i^{n+\frac12}\phi_j^{n+\frac12}
+\,d\mathbf{x}.
+\end{aligned}
+\label{eq:c_adv_and_m_div_defs}
+\end{equation}
 
-La formulazione ALE richiede tuttavia una condizione aggiuntiva di consistenza geometrica. La corretta discretizzazione del moto della mesh e delle quantità geometriche associate è infatti essenziale per evitare che la deformazione della griglia introduca contributi numerici non presenti nel problema continuo \citep{farhat2001the,formaggia2004stability,tienne2009perspective}.
+A differenza delle formulazioni basate su remapping, l'equazione \eqref{eq:ale_fully_discrete} evolve direttamente i gradi di libertà nodali da $\mathbf{U}^n$ a $\mathbf{U}^{n+1}$ incorporando la variazione della matrice di massa tra $M^n$ e $M^{n+1}$ senza richiedere la soluzione di un sistema ausiliario di proiezione dello stato.
 
-\subsection{Discrete Geometric Conservation Law (D-GCL)}
+\subsection{Discrete Geometric Conservation Law (D-GCL) e conservazione della massa}
 
 \label{subsec:dgcl}
 
-La Geometric Conservation Law (GCL) esprime la relazione geometrica tra la variazione temporale del volume di una cella e il flusso associato al movimento della sua frontiera. In forma continua, per un elemento mobile $K(t)$,
+La Geometric Conservation Law (GCL) esprime l'equivalenza tra la derivata temporale della misura di un elemento mobile $K_e(t)$ e il flusso associato alla velocità della sua frontiera \citep{farhat2001the,tienne2009perspective}:
 
 \begin{equation}
-\frac{d}{dt}|K(t)|
+\frac{d}{dt}|K_e(t)|
 =
-\int_{K(t)}
+\int_{K_e(t)}
 \nabla\cdot\mathbf{w}
-\,d\mathbf{x},
+\,d\mathbf{x}.
 \label{eq:continuous_gcl}
 \end{equation}
 
-equivalentemente alla forma integrale ottenuta mediante il teorema della divergenza. La GCL costituisce quindi una proprietà della trasformazione geometrica tra configurazione di riferimento e configurazione fisica \citep{farhat2001the,tienne2009perspective}.
-
-Nel contesto discreto, la relazione deve essere verificata con la stessa discretizzazione temporale utilizzata per aggiornare la mesh. Consideriamo due configurazioni consecutive
-
-\[
-\mathcal{T}_h^n
-\qquad\text{e}\qquad
-\mathcal{T}_h^{n+1}
-\]
-
-e definiamo la configurazione intermedia mediante
-
-\begin{equation}
-\mathbf{X}^{n+\frac12}
-=
-\frac{
-\mathbf{X}^{n}
-+
-\mathbf{X}^{n+1}
-}{2}.
-\label{eq:midpoint_mesh}
-\end{equation}
-
-La velocità discreta della mesh è
-
-\begin{equation}
-\mathbf{w}^{n+\frac12}
-=
-\frac{
-\mathbf{X}^{n+1}
--
-\mathbf{X}^{n}
-}{
-\Delta t
-}.
-\label{eq:gcl_mesh_velocity}
-\end{equation}
-
-Per ogni elemento $K_e$ la corrispondente relazione discreta viene espressa come
+Per elementi triangolari lineari $P_1$ i cui vertici si muovono linearmente nel passo $[t^n,t^{n+1}]$ con velocità $\mathbf{w}^{n+\frac12} = \allowbreak (\mathbf{X}^{n+1}-\mathbf{X}^n)/\Delta t$, il determinante Jacobiano (e quindi l'area $|K_e(t)|$) è un polinomio quadratico nel tempo, la cui derivata temporale è affine. Per l'esattezza della formula di quadratura del punto medio sulle funzioni affini, vale l'identità geometrica esatta:
 
 \begin{equation}
 \frac{
@@ -636,118 +617,133 @@ Per ogni elemento $K_e$ la corrispondente relazione discreta viene espressa come
 =
 \int_{K_e^{n+\frac12}}
 \nabla\cdot\mathbf{w}^{n+\frac12}
-\,d\mathbf{x}.
+\,d\mathbf{x}
+=
+|K_e^{n+\frac12}|
+\left(\nabla\cdot\mathbf{w}^{n+\frac12}\right)_e.
 \label{eq:elemental_dgcl}
 \end{equation}
 
-La scelta della configurazione di midpoint è particolarmente adatta al moto lineare dei vertici considerato nel presente lavoro. Durante l'interpolazione lineare tra due configurazioni consecutive, l'area di un triangolo varia come funzione quadratica del tempo, mentre la sua derivata è lineare. La valutazione della cinematica nella configurazione intermedia permette pertanto di verificare in modo coerente la variazione finita dell'area.
-
-Per analizzare la consistenza geometrica a livello discreto è inoltre utile introdurre la relazione matriciale
+Poiché su ciascun triangolo $P_1$ la matrice elementare di massa è proporzionale all'area tramite la matrice di riferimento costante $\widehat{M}_{\mathrm{ref}}$ ($M_e^n = |K_e^n|\widehat{M}_{\mathrm{ref}}$) e la divergenza $(\nabla\cdot\mathbf{w}^{n+\frac12})_e$ è costante sull'elemento, dalla \eqref{eq:elemental_dgcl} segue immediatamente che
 
 \begin{equation}
-\mathbf{R}_{\mathrm{alg}}^{\mathrm{GCL}}
-=
-\left\|
+\begin{aligned}
+\frac{M_e^{n+1}-M_e^n}{\Delta t}
+&=
+|K_e^{n+\frac12}|
+\left(\nabla\cdot\mathbf{w}^{n+\frac12}\right)_e
+\widehat{M}_{\mathrm{ref}}
+\\
+&=
+\left(M_{\mathrm{div}}^{w,n+\frac12}\right)_e.
+\end{aligned}
+\label{eq:mass_diff_equals_m_div}
+\end{equation}
+
+D'altra parte, per la proprietà di partizione dell'unità delle funzioni di forma $P_1$, ossia $\sum_{j=1}^N \phi_j^{n+\frac12}(\mathbf{x}) \equiv 1$, i gradienti soddisfano $\sum_{j=1}^N \nabla\phi_j^{n+\frac12}(\mathbf{x}) \equiv \mathbf{0}$ e pertanto risulta $C_{\mathrm{adv}}^{w,n+\frac12}\mathbf{1} = \mathbf{0}$. Di conseguenza, lo schema \eqref{eq:ale_fully_discrete}--\eqref{eq:c_adv_and_m_div_defs} soddisfa esattamente la \textit{Discrete Geometric Conservation Law} (D-GCL) algebrica:
+
+\begin{equation}
+\begin{aligned}
 \left(
 \frac{M^{n+1}-M^n}{\Delta t}
 +
-C_{\mathrm{mesh}}
-\right)
-\mathbf{1}
-\right\|_{\infty},
+C_{\mathrm{mesh}}^{n+\frac12}
+\right)\mathbf{1}
+&=
+\left(
+\frac{M^{n+1}-M^n}{\Delta t}
+-
+M_{\mathrm{div}}^{w,n+\frac12}
+\right)\mathbf{1}
+\\
+&=
+\mathbf{0}.
+\end{aligned}
 \label{eq:algebraic_dgcl}
 \end{equation}
 
-dove $C_{\mathrm{mesh}}$ rappresenta la componente dell'operatore convettivo associata esclusivamente al moto della mesh. Tale residuo non costituisce una riformulazione della PDE fisica, ma una misura indipendente della consistenza tra variazione geometrica delle matrici di massa e discretizzazione della velocità di griglia.
+\paragraph{Conservazione globale della massa discreta.}
 
-Per elementi finiti lineari $P_1$, la variazione della misura geometrica è direttamente collegata alla variazione delle matrici elementari di massa. La verifica di \eqref{eq:algebraic_dgcl} permette quindi di controllare se la discretizzazione utilizzata per la mesh motion è compatibile, a livello discreto, con la corrispondente variazione della geometria.
-
-\paragraph{Metriche di verifica della consistenza geometrica.}
-
-Per convalidare computazionalmente la formulazione ALE prima del suo impiego dinamico, vengono introdotti tre indicatori indipendenti, successivamente quantificati nello Stage C (Sezione~\ref{subsec:stage_c_verification}).
-
-Il primo è il residuo geometrico element-wise,
+Oltre a garantire la preservazione esatta di uno stato uniforme $\mathbf{U}^n = \mathbf{1}$ (\textit{free-stream preservation}), la struttura di $C_{\mathrm{mesh}}^{n+\frac12}$ definita in \eqref{eq:c_mesh_continuous_split} assicura una proprietà duale fondamentale per qualunque stato discreto $\mathbf{U}^{n+1}$. Sommando sulle righe (moltiplicazione a sinistra per $\mathbf{1}^T$) e sfruttando $\sum_{i=1}^N \phi_i^{n+\frac12} \equiv 1$ insieme al teorema della divergenza e al vincolo di bordo fisso ($\mathbf{w}^{n+\frac12}|_{\partial\Omega} = \mathbf{0}$), si ottiene:
 
 \begin{equation}
-R_e^{\mathrm{GCL}}
+\begin{aligned}
+\mathbf{1}^T C_{\mathrm{mesh}}^{n+\frac12}\mathbf{U}^{n+1}
+&=
+-\int_{\Omega^{n+\frac12}}
+\nabla\cdot\left(\mathbf{w}^{n+\frac12} u_h^{n+1}\right)
+\,d\mathbf{x}
+\\
+&=
+-\int_{\partial\Omega}
+u_h^{n+1}\left(\mathbf{w}^{n+\frac12}\cdot\mathbf{n}\right)
+\,ds
 =
-\left|
-\frac{
-|K_e^{n+1}|-|K_e^n|
-}{
-\Delta t
-}
--
-|K_e^{n+\frac12}|
-(\nabla\cdot\mathbf{w}^{n+\frac12})_e
-\right|,
-\label{eq:elemental_gcl_residual}
+0.
+\end{aligned}
+\label{eq:dual_mass_conservation_identity}
 \end{equation}
 
-che misura lo scarto tra la variazione temporale dell'area dell'elemento e il contributo associato alla divergenza della velocità di mesh.
-
-Il secondo è il residuo algebrico globale
+Pertanto, in assenza di forzanti esterne e di flussi al contorno ($\mathbf{b}=\mathbf{0}$, $\nu=0$, $f=0$), moltiplicando a sinistra l'equazione \eqref{eq:ale_fully_discrete} per $\mathbf{1}^T$ si dimostra che la massa discreta globale è rigorosamente conservata durante il movimento della griglia:
 
 \begin{equation}
-\mathbf{R}_{\mathrm{alg}}^{\mathrm{GCL}}
+m_h^{n+1}
+\equiv
+\mathbf{1}^T M^{n+1}\mathbf{U}^{n+1}
 =
-\left\|
-\left(
-\frac{M^{n+1}-M^n}{\Delta t}
-+
-C_{\mathrm{mesh}}
-\right)
-\mathbf{1}
-\right\|_{\infty},
-\label{eq:algebraic_gcl_residual}
+\mathbf{1}^T M^n\mathbf{U}^n
+\equiv
+m_h^n.
+\label{eq:discrete_mass_invariance}
 \end{equation}
 
-che quantifica l'errore della relazione geometrica discreta a livello dei gradi di libertà nodali.
+\paragraph{Metriche diagnostiche per la verifica computazionale.}
 
-Il terzo indicatore è l'errore di preservazione del free stream, definito come
-
-\begin{equation}
-E_{\mathrm{FS}}
-=
-\max_{1\leq n\leq N_t}
-\left\|
-\mathbf{U}^n-\mathbf{1}
-\right\|_{\infty},
-\label{eq:free_stream_error}
-\end{equation}
-
-per un campo iniziale costante $u_0\equiv1$ e in assenza di contributi fisici che ne modifichino il valore.
-
-L'utilizzo congiunto dei tre indicatori consente di distinguere la verifica della relazione geometrica dalla sola osservazione della preservazione di un campo uniforme. Il free-stream preservation costituisce infatti una proprietà osservabile della soluzione, mentre i residui \eqref{eq:elemental_gcl_residual} e \eqref{eq:algebraic_gcl_residual} verificano direttamente la coerenza della cinematica discreta della mesh.
-
-I risultati numerici ottenuti nello Stage C vengono pertanto interpretati come una verifica della D-GCL entro la precisione numerica osservata, e non come una dimostrazione indipendente di conservazione fisica globale.
-
-\paragraph{Eliminazione del remapping esplicito.}
-
-Nella strategia basata sul remapping, ogni modifica della configurazione richiede una sequenza del tipo
-
-\[
-\mathcal{T}_h^n
-\longrightarrow
-\mathcal{T}_h^{n+1}
-\longrightarrow
-\mathcal{R}^{n\rightarrow n+1}
-\longrightarrow
-u_h^{n+1}.
-\]
-
-Nel paradigma ALE adottato da GDM, il trasferimento esplicito viene invece sostituito dall'evoluzione della mesh
-
-\[
-\mathcal{T}_h(t),
-\qquad
-\mathbf{w}(t)
-=
-\frac{\partial\mathbf{x}}{\partial t},
-\]
-
-e la soluzione evolve sulla mesh mobile attraverso il termine convettivo relativo $(\mathbf{b}-\mathbf{w})$. La pipeline principale non richiede pertanto la costruzione di un operatore di proiezione tra due spazi FEM distinti dopo ciascun aggiornamento della geometria.
-
-Questa modifica non elimina il costo associato alla deformazione della mesh in senso assoluto: le matrici FEM devono essere aggiornate sulla configurazione corrente e la velocità di mesh deve essere calcolata e integrata nel solutore. Essa elimina tuttavia una classe specifica di operazioni, ossia la soluzione di un problema di trasferimento dello stato separato dal passo PDE.
-
-Il vantaggio computazionale deve quindi essere valutato considerando l'intera simulazione e non soltanto il costo locale del remapping. Nel seguito verranno confrontate direttamente la strategia con proiezione $L^2$ e la formulazione ALE, utilizzando la stessa sequenza di target geometrici generati dalla GNN, così da isolare il più possibile il contributo associato alla rimozione del trasferimento esplicito dello stato.
+Nello Stage C (Sezione~\ref{subsec:stage_c_verification}) la consistenza geometrica e conservativa del solutore viene verificata mediante quattro indicatori:
+\begin{enumerate}
+    \item il residuo geometrico locale per elemento:
+    \begin{equation}
+    R_e^{\mathrm{GCL}}
+    =
+    \left|
+    \frac{|K_e^{n+1}|-|K_e^n|}{\Delta t}
+    -
+    |K_e^{n+\frac12}|
+    \left(\nabla\cdot\mathbf{w}^{n+\frac12}\right)_e
+    \right|;
+    \label{eq:elemental_gcl_residual}
+    \end{equation}
+    \item il residuo algebrico globale della D-GCL:
+    \begin{equation}
+    R_{\mathrm{alg}}^{\mathrm{GCL}}
+    =
+    \left\|
+    \left(
+    \frac{M^{n+1}-M^n}{\Delta t}
+    +
+    C_{\mathrm{mesh}}^{n+\frac12}
+    \right)\mathbf{1}
+    \right\|_{\infty};
+    \label{eq:algebraic_gcl_residual}
+    \end{equation}
+    \item l'errore di preservazione del campo uniforme (\textit{free-stream preservation}) per $u_0 \equiv 1$:
+    \begin{equation}
+    E_{\mathrm{FS}}
+    =
+    \max_{1\leq n\leq N_t}
+    \left\|\mathbf{U}^n-\mathbf{1}\right\|_{\infty};
+    \label{eq:free_stream_error}
+    \end{equation}
+    \item la deriva relativa della massa discreta globale su un campo non uniforme:
+    \begin{equation}
+    E_{\mathrm{mass}}
+    =
+    \max_{1\leq n\leq N_t}
+    \frac{
+    \left|\mathbf{1}^T M^n\mathbf{U}^n - \mathbf{1}^T M^0\mathbf{U}^0\right|
+    }{
+    \left|\mathbf{1}^T M^0\mathbf{U}^0\right|
+    }.
+    \label{eq:discrete_mass_drift_metric}
+    \end{equation}
+\end{enumerate}

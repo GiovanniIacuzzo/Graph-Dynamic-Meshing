@@ -9,7 +9,7 @@ experiment:
   seed: 42
   device: "mps"                 # 'cuda' o 'cpu'
   deterministic: false
-  output_dir: "results/stage_a"
+  output_dir: "results/stage_a_oracle_v2"
   log_level: "INFO"
 
 # -----------------------------------------------------------------------------
@@ -62,7 +62,7 @@ oracle:
     norm_E_fallback: 1.0e-12     # Soglia numerica denominatore per normalizzazione E_interp
   optimizer:
     method: "L-BFGS-B"
-    max_iter: 250
+    max_iter: 2000
     ftol: 1.0e-7
     gtol: 1.0e-5
     box_bounds:
@@ -73,9 +73,9 @@ oracle:
 # 4. Generazione e Partizionamento Dataset
 # -----------------------------------------------------------------------------
 dataset:
-  raw_dir: "data/raw"
+  raw_dir: "data/raw_oracle_v2"
   processed_dir: "data/processed"
-  manifest_path: "data/manifest.json"
+  manifest_path: "data/manifest_oracle_v2.json"
   format: "pickle"               # 'pickle' con campioni serializzati
   splits:
     num_train: 120

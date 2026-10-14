@@ -1,22 +1,25 @@
 """
 numerics/dynamic_solver.py
-Motore di simulazione transiente per PDE Convezione-Diffusione con r-adattivitá GDM.
+Motore di simulazione transiente per PDE Convezione-Diffusione con r-adattività GDM.
 
 Supporta:
-    - 'fixed'                 : Griglia fissa (B0)
-    - 'gnn_fem' (remap_method): GDM con gradiente nodale FEM runtime (B1: p1, B2: l2)
-    - 'oracle'  (remap_method): Oracolo variazionale (B3)
+- 'fixed'                 : Griglia fissa (B0)
+- 'gnn_fem' (remap_method): GDM con gradiente nodale FEM runtime (B1: p1, B2: l2)
+- 'oracle'  (remap_method): Oracolo variazionale (B3)
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional, Tuple
 import time
 import numpy as np
 
 from geometry.mesh import TriangularMesh2D
 from geometry.geometry import compute_mesh_metrics
-from geometry.safety import apply_safety_filter
 from numerics.pde import ManufacturedConvectionDiffusion2D
-from numerics.fem import ConvectionDiffusionFEM2D, compute_field_gradients, _get_triangle_quadrature_degree_5
+from numerics.fem import (
+    ConvectionDiffusionFEM2D,
+    compute_field_gradients,
+    _get_triangle_quadrature_degree_5,
+)
 from numerics.remap import remap_p1_solution
 from numerics.remap_l2 import remap_l2_projection
 from oracle.field import GaussianBumpField
@@ -29,7 +32,7 @@ def compute_continuous_errors(
     u_h: np.ndarray,
     pde: ManufacturedConvectionDiffusion2D,
     t: float
-) -> tuple[float, float]:
+) -> Tuple[float, float]:
     """Calcola l'errore continuo relativo L2 e la seminorma H1 con quadratura di Dunavant grado 5."""
     qp_ref, qw_ref = _get_triangle_quadrature_degree_5()
     cells = mesh.cells
@@ -101,16 +104,37 @@ class DynamicPDESimulator:
         remap_method: str = "p1",
         T: float = 0.5,
         dt: float = 0.005,
-        adapt_interval: int = 10
+        adapt_interval: int = 10,
+        adapt_at_window_start: bool = False,
     ) -> Dict[str, Any]:
+
         assert mode in ["fixed", "gnn_fem", "gnn_exact", "oracle"], f"Modalità non valida: {mode}"
         assert remap_method in ["p1", "l2"], f"Remap method non valido: {remap_method}"
 
-        current_mesh = self.initial_mesh
-        fem_solver = ConvectionDiffusionFEM2D(current_mesh, self.pde)
-        u_current = self.pde.evaluate_solution(current_mesh.nodes[:, 0], current_mesh.nodes[:, 1], 0.0)
+        if dt <= 0.0:
+            raise ValueError("dt deve essere strettamente positivo.")
+        if T <= 0.0:
+            raise ValueError("T deve essere strettamente positivo.")
+        if adapt_interval < 1:
+            raise ValueError("adapt_interval deve essere almeno 1.")
 
-        n_steps = int(round(T / dt))
+        n_steps_float = T / dt
+        n_steps = int(round(n_steps_float))
+        if not np.isclose(n_steps * dt, T, rtol=1e-10, atol=1e-12):
+            raise ValueError(f"T={T} non è un multiplo intero di dt={dt}.")
+
+        current_mesh = self.initial_mesh
+
+        t_init_fem = time.perf_counter()
+        fem_solver = ConvectionDiffusionFEM2D(current_mesh, self.pde)
+        init_fem_assembly_ms = (time.perf_counter() - t_init_fem) * 1000.0
+
+        u_current = self.pde.evaluate_solution(
+            current_mesh.nodes[:, 0],
+            current_mesh.nodes[:, 1],
+            0.0,
+        )
+
         current_time = 0.0
 
         history = {
@@ -128,9 +152,12 @@ class DynamicPDESimulator:
             "timing_safety_ms": [],
             "timing_remap_ms": [],
             "timing_total_step_ms": [],
-            "mesh_snapshots": [(0.0, current_mesh.nodes.copy(), u_current.copy())]
+            "mesh_snapshots": [
+                (0.0, current_mesh.nodes.copy(), u_current.copy())
+            ],
         }
 
+        # Diagnostica iniziale (fuori dal cronometro algoritmico)
         l2_init, h1_init = compute_continuous_errors(current_mesh, u_current, self.pde, 0.0)
         history["rel_l2_error"].append(l2_init)
         history["rel_h1_error"].append(h1_init)
@@ -141,11 +168,12 @@ class DynamicPDESimulator:
         history["inverted_cells"].append(int(np.sum(geom_init["inverted"])))
         history["alpha_global"].append(1.0)
 
-        t_sim_start = time.perf_counter()
+        t_wall_start = time.perf_counter()
+        algo_elapsed_s = init_fem_assembly_ms / 1000.0
 
         for step in range(1, n_steps + 1):
-            t_step_start = time.perf_counter()
             t_next = step * dt
+
             time_fem = 0.0
             time_gnn = 0.0
             time_safety = 0.0
@@ -154,28 +182,40 @@ class DynamicPDESimulator:
             alpha_step = 1.0
             remap_err_step = 0.0
 
-            if mode != "fixed" and (step % adapt_interval == 0):
+            should_adapt = (
+                ((step - 1) % adapt_interval == 0)
+                if adapt_at_window_start
+                else (step % adapt_interval == 0)
+            )
+
+            if mode != "fixed" and should_adapt:
                 grad_mode = "exact" if mode == "gnn_exact" else "fem"
+
+                t_grad_start = time.perf_counter()
                 grad_u = compute_field_gradients(
                     mesh=current_mesh,
                     u=u_current,
                     pde=self.pde,
                     t=current_time,
-                    gradient_mode=grad_mode
+                    gradient_mode=grad_mode,
                 )
+                grad_ms = (time.perf_counter() - t_grad_start) * 1000.0
 
                 if mode in ["gnn_fem", "gnn_exact"]:
                     pred_res = self.engine.predict(current_mesh, u_current, grad_u)
                     new_mesh = pred_res["adapted_mesh"]
                     alpha_step = float(pred_res.get("safety_alpha", pred_res.get("alpha", 1.0)))
-                    time_gnn = pred_res["timing"]["gnn_time"] * 1000.0
+                    time_gnn = grad_ms + pred_res["timing"]["gnn_time"] * 1000.0
                     time_safety = pred_res["timing"]["safety_time"] * 1000.0
 
                 elif mode == "oracle":
                     t_or_start = time.perf_counter()
                     cx, cy = self.pde.get_center(current_time)
                     field_oracle = GaussianBumpField(
-                        mu_x=cx, mu_y=cy, sigma=self.pde.sigma, amplitude=np.exp(-self.pde.beta * current_time)
+                        mu_x=cx,
+                        mu_y=cy,
+                        sigma=self.pde.sigma,
+                        amplitude=np.exp(-self.pde.beta * current_time),
                     )
                     opt = OfflineMeshOptimizer(
                         reference_field=field_oracle,
@@ -185,52 +225,83 @@ class DynamicPDESimulator:
                         lambda_D=self.config["oracle"]["objective"]["lambda_D"],
                         lambda_Q=self.config["oracle"]["objective"]["lambda_Q"],
                         epsilon=self.epsilon,
-                        max_iter=3
+                        max_iter=3,
                     )
                     opt_res = opt.optimize()
                     time_gnn = (time.perf_counter() - t_or_start) * 1000.0
-                    alpha_step = opt_res["final_metrics"]["safety_alpha_applied"]
+                    alpha_step = float(opt_res["final_metrics"]["safety_alpha_applied"])
                     new_mesh = current_mesh.update_coordinates(opt_res["optimal_nodes"])
 
-                if alpha_step < 1.0:
+                if alpha_step < 1.0 - 1e-12:
                     history["safety_activations"] += 1
 
-                # Re-proiezione di stato: P1 vs L2
+                # Remapping dello stato sulla nuova mesh
+                u_before_remap = u_current.copy()
                 t_rem_start = time.perf_counter()
+
                 if remap_method == "p1":
                     u_remapped = remap_p1_solution(
                         old_nodes=current_mesh.nodes,
                         old_cells=current_mesh.cells,
-                        old_u=u_current,
-                        new_nodes=new_mesh.nodes
+                        old_u=u_before_remap,
+                        new_nodes=new_mesh.nodes,
                     )
                 else:
                     u_remapped = remap_l2_projection(
                         old_nodes=current_mesh.nodes,
                         old_cells=current_mesh.cells,
-                        old_u=u_current,
+                        old_u=u_before_remap,
                         new_nodes=new_mesh.nodes,
-                        new_cells=new_mesh.cells
+                        new_cells=new_mesh.cells,
                     )
+
+                boundary_nodes = np.asarray(new_mesh.boundary_nodes, dtype=np.int64)
+                u_boundary = self.pde.evaluate_solution(
+                    new_mesh.nodes[boundary_nodes, 0],
+                    new_mesh.nodes[boundary_nodes, 1],
+                    current_time,
+                )
+                u_remapped_with_bc = u_remapped.copy()
+                u_remapped_with_bc[boundary_nodes] = u_boundary
+
                 time_remap = (time.perf_counter() - t_rem_start) * 1000.0
 
-                u_exact_new_nodes = self.pde.evaluate_solution(new_mesh.nodes[:, 0], new_mesh.nodes[:, 1], current_time)
-                remap_err_step = float(np.linalg.norm(u_remapped - u_exact_new_nodes) / np.linalg.norm(u_exact_new_nodes))
+                # Diagnostica errore remapping grezzo (fuori dal timer)
+                u_exact_new_nodes = self.pde.evaluate_solution(
+                    new_mesh.nodes[:, 0],
+                    new_mesh.nodes[:, 1],
+                    current_time,
+                )
+                remap_err_step = float(
+                    np.linalg.norm(u_remapped - u_exact_new_nodes)
+                    / max(np.linalg.norm(u_exact_new_nodes), 1e-14)
+                )
 
                 current_mesh = new_mesh
-                u_current = u_remapped
-                fem_solver = ConvectionDiffusionFEM2D(current_mesh, self.pde)
+                u_current = u_remapped_with_bc
 
+                t_reass_start = time.perf_counter()
+                fem_solver = ConvectionDiffusionFEM2D(current_mesh, self.pde)
+                time_fem += (time.perf_counter() - t_reass_start) * 1000.0
+
+            # Avanzamento temporale FEM
             t_fem_start = time.perf_counter()
-            u_next = fem_solver.step_backward_euler(u_n=u_current, dt=dt, t_next=t_next)
-            time_fem = (time.perf_counter() - t_fem_start) * 1000.0
+            u_next = fem_solver.step_backward_euler(
+                u_n=u_current,
+                dt=dt,
+                t_next=t_next,
+            )
+            time_fem += (time.perf_counter() - t_fem_start) * 1000.0
 
             u_current = u_next
             current_time = t_next
 
+            step_algo_ms = time_fem + time_gnn + time_safety + time_remap
+            algo_elapsed_s += step_algo_ms / 1000.0
+
+            # Valutazione diagnostica della soluzione (fuori dal timer algoritmico)
             l2_err, h1_err = compute_continuous_errors(current_mesh, u_current, self.pde, current_time)
             geom_m = compute_mesh_metrics(current_mesh.nodes, current_mesh.cells)
-            time_total_step = (time.perf_counter() - t_step_start) * 1000.0
 
             history["time"].append(current_time)
             history["rel_l2_error"].append(l2_err)
@@ -240,16 +311,21 @@ class DynamicPDESimulator:
             history["inverted_cells"].append(int(np.sum(geom_m["inverted"])))
             history["alpha_global"].append(alpha_step)
             history["remap_error_l2"].append(remap_err_step)
+
             history["timing_fem_ms"].append(time_fem)
             history["timing_gnn_ms"].append(time_gnn)
             history["timing_safety_ms"].append(time_safety)
             history["timing_remap_ms"].append(time_remap)
-            history["timing_total_step_ms"].append(time_total_step)
+            history["timing_total_step_ms"].append(step_algo_ms)
 
             if step in [int(round(n_steps / 3)), int(round(2 * n_steps / 3)), n_steps]:
-                history["mesh_snapshots"].append((current_time, current_mesh.nodes.copy(), u_current.copy()))
+                history["mesh_snapshots"].append(
+                    (current_time, current_mesh.nodes.copy(), u_current.copy())
+                )
 
-        history["total_elapsed_simulation_s"] = time.perf_counter() - t_sim_start
+        history["total_elapsed_simulation_s"] = algo_elapsed_s
+        history["wall_time_with_diagnostics_s"] = time.perf_counter() - t_wall_start
         history["final_mesh"] = current_mesh
         history["final_solution"] = u_current
+
         return history

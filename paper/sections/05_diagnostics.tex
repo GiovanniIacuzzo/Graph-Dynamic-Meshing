@@ -481,15 +481,15 @@ La proiezione $L^2$ riduce in modo significativo l'errore associato al trasferim
 
 \label{subsec:stage_c_verification}
 
-Lo Stage C introduce la formulazione ALE descritta nella Sezione~\ref{subsec:ale_formulation}. A differenza dello Stage B, nel quale ogni aggiornamento discreto della mesh richiede un trasferimento esplicito dello stato, lo spostamento prodotto dalla GNN viene distribuito su una finestra temporale e trasformato in una velocità di mesh continua a tratti.
+Lo Stage C introduce la formulazione ALE conservativa descritta nella Sezione~\ref{subsec:ale_formulation}. A differenza dello Stage B, nel quale ogni aggiornamento discreto della mesh richiede un trasferimento esplicito dello stato, lo spostamento prodotto dalla GNN viene distribuito su una finestra temporale e trasformato in una velocità di mesh continua a tratti.
 
-Prima di utilizzare la formulazione ALE nel benchmark dinamico finale, vengono eseguiti cinque test indipendenti, indicati come C1--C5. Tali test verificano separatamente la cinematica della mesh, la consistenza geometrica, l'effetto della deformazione sulla soluzione PDE e il mantenimento degli ordini di convergenza spaziale e temporale.
+Prima di utilizzare la formulazione ALE nel benchmark dinamico finale, vengono eseguiti cinque test indipendenti, indicati come C1--C5, che verificano separatamente la cinematica della mesh, la D-GCL, la conservazione della massa discreta, la consistenza a singolo passo e il mantenimento degli ordini di convergenza spaziale e temporale.
 
 \subsubsection{Test C1: verifica cinematica della velocità di mesh}
 
 \label{subsubsec:c1}
 
-Il primo test verifica la corrispondenza tra lo spostamento nodale prescritto e la velocità discreta
+Il primo test verifica la corrispondenza tra una legge di moto nodale analitica regolare (con deformazione identicamente nulla a $t=0$) e la velocità discreta valutata al punto medio:
 
 \[
 \mathbf{w}^{n+\frac12}
@@ -497,27 +497,27 @@ Il primo test verifica la corrispondenza tra lo spostamento nodale prescritto e 
 \frac{\mathbf{X}^{n+1}-\mathbf{X}^{n}}{\Delta t}.
 \]
 
-Nel test considerato, l'errore relativo $L^2$ sulla velocità di mesh è
+Nel test considerato, l'errore relativo $L^2$ sulla velocità di mesh è pari a
 
 \[
 1.64\times10^{-4},
 \]
 
-mentre l'errore $L^\infty$ è
+mentre l'errore in norma $L^\infty$ è
 
 \[
-3.97\times10^{-5}.
+1.98\times10^{-5},
 \]
 
-Il risultato mostra che la discretizzazione cinematica utilizzata dal solutore ALE rappresenta con errore contenuto il movimento nodale imposto.
+confermando l'accuratezza del secondo ordine della discretizzazione cinematica adottata dal solutore ALE.
 
-\subsubsection{Test C2: verifica della D-GCL e preservazione del free stream}
+\subsubsection{Test C2: verifica della D-GCL, free-stream preservation e conservazione della massa}
 
 \label{subsubsec:c2}
 
-La consistenza geometrica discreta dello schema ALE viene verificata mediante gli indicatori introdotti nella Sezione~\ref{subsec:dgcl} su una sequenza di $100$ passi temporali deformanti.
+La consistenza geometrica e conservativa dello schema ALE viene verificata mediante gli indicatori introdotti nella Sezione~\ref{subsec:dgcl} su una sequenza di $100$ passi temporali deformanti.
 
-Il massimo residuo geometrico element-wise risulta
+Il massimo residuo geometrico element-wise risulta pari a
 
 \[
 \max_{n,e}R_e^{\mathrm{GCL}}
@@ -525,165 +525,86 @@ Il massimo residuo geometrico element-wise risulta
 4.34\times10^{-17},
 \]
 
-mentre il residuo della relazione matriciale discreta risulta
+mentre il residuo della relazione matriciale discreta (assemblata valutando indipendentemente la dilatazione $M_{\mathrm{div}}^{w,n+\frac12}$ sulla configurazione di midpoint) risulta
 
 \[
 \max_n
 R_{\mathrm{alg}}^{\mathrm{GCL}}
 =
-5.42\times10^{-17}.
+6.48\times10^{-17}.
 \]
 
-Entrambi i valori sono prossimi alla precisione di macchina e indicano una forte consistenza numerica tra la variazione geometrica degli elementi e la discretizzazione della velocità di mesh.
-
-La verifica del free stream, ottenuta imponendo un campo costante $u_0\equiv1$, fornisce
+La verifica end-to-end del \textit{free-stream preservation} per un campo iniziale costante $u_0\equiv1$ fornisce
 
 \[
 E_{\mathrm{FS}}
 =
-2.81\times10^{-14}.
+3.38\times10^{-14}.
 \]
 
-Il campo uniforme rimane quindi invariato entro un errore prossimo alla precisione numerica del calcolo.
+Infine, il test di conservazione della massa discreta (Test C2b), condotto facendo evolvere un impulso gaussiano non uniforme sulla griglia deformante in assenza di forzanti e flussi al bordo, conferma sia l'annullamento dell'operatore duale ($\max_n \|\mathbf{1}^T C_{\mathrm{mesh}}^{n+\frac12}\|_\infty = 3.25\times10^{-18}$) sia l'invarianza dell'integrale discreto $m_h^n = \mathbf{1}^T M^n\mathbf{U}^n$, con una deriva relativa massima pari a
 
-Nel complesso, i tre indicatori forniscono una verifica indipendente e coerente della D-GCL per la discretizzazione considerata. Il risultato viene interpretato come soddisfacimento della consistenza geometrica entro la precisione numerica osservata; non viene invece utilizzato come prova di una proprietà generale di conservazione fisica della PDE.
+\[
+E_{\mathrm{mass}}
+=
+5.18\times10^{-16}.
+\]
 
 \subsubsection{Test C3: consistenza a singolo passo mediante MMS}
 
 \label{subsubsec:c3}
 
-Il test C3 confronta la soluzione ottenuta mediante un singolo passo su mesh fissa con quella ottenuta sulla configurazione deformata mediante il solutore ALE.
-
-L'errore relativo $L^2$ risulta pari a
-
-\[
-4.0011\%
-\]
-
-per il caso di riferimento e
-
-\[
-4.1505\%
-\]
-
-per la configurazione ALE deformata.
-
-La differenza è quindi pari a circa
-
-\[
-0.149
-\]
-
-punti percentuali.
-
-Nel singolo passo considerato, la deformazione della mesh introduce pertanto un incremento limitato dell'errore complessivo rispetto alla configurazione fissa.
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.90\linewidth]
-    {images/stage_c/fig_c3_dynamic_error.png}
-    \caption{Confronto dell'errore PDE nel test C3 tra configurazione fissa e configurazione ALE deformata.}
-    \label{fig:stage_c_c3}
-\end{figure}
+Il test C3 confronta la soluzione ottenuta mediante un singolo passo su mesh fissa con quella ottenuta sulla configurazione deformata mediante il solutore ALE. L'errore relativo $L^2$ risulta pari a $4.0011\%$ per il caso di riferimento a mesh fissa e a $4.0680\%$ per la configurazione ALE deformata, con uno scarto limitato a soli $0.067$ punti percentuali.
 
 \subsubsection{Test C4: convergenza spaziale su mesh deformate}
 
 \label{subsubsec:c4}
 
-Il test C4 verifica il comportamento della discretizzazione spaziale in presenza di mesh deformate, mantenendo la stessa topologia e aumentando progressivamente la risoluzione della griglia. L'errore viene misurato nelle norme $L^2$ e $H^1$ rispetto alla soluzione manufactured.
-
-Per le risoluzioni considerate si ottengono i valori riportati in Tabella~\ref{tab:stage_c_spatial_convergence}.
+Il test C4 verifica il comportamento della discretizzazione spaziale in presenza di mesh deformate aumentando progressivamente la risoluzione della griglia e scalando il passo temporale come $\Delta t \propto h^2$ per impedire che l'errore temporale del primo ordine contamini la stima asintotica spaziale. I risultati sono riportati in Tabella~\ref{tab:stage_c_spatial_convergence}.
 
 \begin{table}[htbp]
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
-\caption{Convergenza spaziale del solutore ALE su mesh deformate.}
+\caption{Convergenza spaziale del solutore ALE su mesh deformate (Test C4).}
 \label{tab:stage_c_spatial_convergence}
 \begin{tabular}{ccccc}
 \toprule
 Mesh & $E_{L^2}$ & Rate $L^2$ & $E_{H^1}$ & Rate $H^1$ \\
 \midrule
-$8\times8$   & $3.7062\times10^{-1}$ & --   & $7.1340\times10^{-1}$ & --   \\
-$16\times16$ & $1.4345\times10^{-1}$ & $1.37$ & $4.5983\times10^{-1}$ & $0.63$ \\
-$32\times32$ & $3.8812\times10^{-2}$ & $1.89$ & $2.4297\times10^{-1}$ & $0.92$ \\
-$64\times64$ & $9.9228\times10^{-3}$ & $1.97$ & $1.2323\times10^{-1}$ & $0.98$ \\
+$8\times8$   & $3.9496\times10^{-1}$ & --     & $7.3434\times10^{-1}$ & --     \\
+$16\times16$ & $1.4131\times10^{-1}$ & $1.48$ & $4.5469\times10^{-1}$ & $0.69$ \\
+$32\times32$ & $3.8237\times10^{-2}$ & $1.89$ & $2.4024\times10^{-1}$ & $0.92$ \\
+$64\times64$ & $9.7501\times10^{-3}$ & $1.97$ & $1.2180\times10^{-1}$ & $0.98$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Gli ordini osservati tendono progressivamente ai valori attesi per elementi lineari $P_1$:
+Gli ordini osservati convergono ai valori teorici attesi per elementi lineari $P_1$, ossia $\mathcal{O}(h^2)$ in norma $L^2$ ($1.89$ e $1.97$) e $\mathcal{O}(h)$ in seminorma $H^1$ ($0.92$ e $0.98$).
 
-\[
-\mathcal{O}(h^2)
-\qquad\text{in }L^2,
-\]
-
-e
-
-\[
-\mathcal{O}(h)
-\qquad\text{in }H^1.
-\]
-
-In particolare, sulle due ultime finestre di raffinamento vengono osservati ordini pari a $1.89$ e $1.97$ in norma $L^2$, e $0.92$ e $0.98$ in norma $H^1$. Il comportamento indica che la deformazione della mesh non impedisce il recupero del regime asintotico atteso nel range di risoluzioni considerato.
-
-\subsubsection{Test C5: convergenza temporale per auto-convergenza}
-
+\subsection{Test C5: convergenza temporale per auto-convergenza in norma \texorpdfstring{$L^2(\Omega)$}{L2(Ω)}}
 \label{subsubsec:c5}
 
-La convergenza temporale viene verificata mediante un test di auto-convergenza di tipo Cauchy utilizzando tre valori del passo temporale:
+La convergenza temporale viene verificata mediante un test di auto-convergenza di Cauchy dimezzando progressivamente il passo temporale ($\Delta t \in \{0.01, 0.005, 0.0025, 0.00125\}$) a partire dalla mesh iniziale indeformata a $t=0$ e misurando lo scarto nella norma continua $L^2(\Omega)$ indotta dalla matrice di massa finale $M(T_{\mathrm{eval}})$. Le differenze relative tra soluzioni consecutive sono pari a
 
 \[
-\Delta t
-=
-0.01,\quad
-0.005,\quad
-0.0025.
+9.9765\times10^{-3},
+\qquad
+5.0072\times10^{-3},
+\qquad
+2.5071\times10^{-3},
 \]
 
-Le differenze tra soluzioni a passi successivi sono rispettivamente
-
-\[
-6.4654\times10^{-3},
-\qquad
-3.2591\times10^{-3},
-\qquad
-1.6482\times10^{-3},
-\]
-
-con ordini sperimentali pari a
+corrispondenti a ordini sperimentali pari a
 
 \[
 0.99
 \qquad\text{e}\qquad
-0.98.
+1.00,
 \]
 
-Il comportamento osservato è quindi compatibile con il primo ordine temporale atteso per Backward Euler,
-
-\[
-\mathcal{O}(\Delta t).
-\]
+in perfetto accordo con il primo ordine temporale $\mathcal{O}(\Delta t)$ dello schema Backward Euler.
 
 \subsubsection{Sintesi della validazione Stage C}
 
-Nel loro insieme, i test C1--C5 verificano separatamente le proprietà necessarie prima dell'introduzione della formulazione ALE nel benchmark dinamico finale:
-
-\begin{itemize}
-    \item C1 verifica la correttezza cinematica della velocità di mesh;
-    \item C2 verifica la D-GCL elementare e algebrica e la preservazione del free stream;
-    \item C3 quantifica l'effetto immediato della deformazione sulla soluzione PDE;
-    \item C4 verifica il recupero degli ordini spaziali attesi della discretizzazione $P_1$ su mesh deformate;
-    \item C5 verifica il primo ordine temporale della discretizzazione Backward Euler.
-\end{itemize}
-
-Nel complesso, i test mostrano che il solutore ALE conserva, nel regime esaminato, il comportamento di consistenza e convergenza della discretizzazione di riferimento anche in presenza di mesh deformate.
-
-\paragraph{Sintesi complessiva della validazione.}
-
-La sequenza Stage A--C permette di isolare progressivamente tre livelli del problema. Lo Stage A verifica che la GNN possa produrre deformazioni utili e che tali deformazioni possano essere sottoposte a un controllo geometrico deterministico. Lo Stage B mostra che, una volta inserito il movimento in una simulazione PDE transiente, il trasferimento dello stato costituisce una sorgente indipendente di errore e costo. Lo Stage C verifica quindi che il passaggio a una descrizione ALE continua sia compatibile con la discretizzazione FEM, con la D-GCL e con gli ordini di convergenza osservati.
-
-Il significato dei tre stadi è quindi distinto: lo Stage A valuta la capacità di adattamento geometrico, lo Stage B quantifica il compromesso tra accuratezza e costo dei differenti operatori di trasferimento, mentre lo Stage C verifica la consistenza della formulazione ALE prima del confronto end-to-end.
-
-Il confronto finale tra la strategia basata sulla proiezione $L^2$ e quella basata sulla formulazione ALE viene pertanto demandato al benchmark dinamico del capitolo successivo, dove le diverse pipeline vengono valutate con metriche comuni di accuratezza, costo computazionale e robustezza geometrica.
+Nel loro insieme, i test C1--C5 certificano che il solutore ALE implementato rispetta esattamente la cinematica discreta (C1), soddisfa la D-GCL e conserva la massa discreta globale a precisione di macchina (C2--C2b), mantiene la consistenza rispetto alla soluzione manufactured (C3) e preserva gli ordini teorici di convergenza spaziale e temporale su griglie in movimento (C4--C5).

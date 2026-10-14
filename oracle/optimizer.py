@@ -106,40 +106,72 @@ class OfflineMeshOptimizer:
         """Callback di monitoraggio invocato ad ogni iterazione dell'algoritmo."""
         val = self._objective_wrapper(x_free_flat)
         self.history.append(val)
+    
+    def _objective_and_gradient_wrapper(
+        self,
+        x_free_flat: np.ndarray
+    ) -> Tuple[float, np.ndarray]:
+        """
+        Ricostruisce la mesh e restituisce il funzionale insieme
+        al gradiente analitico rispetto ai soli nodi interni liberi.
+        """
+        x_full = self._reconstruct_full_nodes(x_free_flat)
+
+        objective_value, grad_full = (
+            self.objective.value_and_gradient(x_full)
+        )
+
+        grad_free = grad_full[self.free_nodes_idx].reshape(-1)
+
+        return (
+            float(objective_value),
+            np.ascontiguousarray(grad_free, dtype=np.float64)
+        )
+
 
     def optimize(self) -> Dict[str, Any]:
         """
-        Esegue la procedura di minimizzazione offline registrando metadati di convergenza e cronometraggio.
+        Esegue l'ottimizzazione Oracle utilizzando il gradiente analitico.
+
+        La mesh ottimizzata viene successivamente verificata attraverso
+        il safety filter. Le coordinate di bordo rimangono fisse.
         """
         import time
+
         t_start = time.perf_counter()
         self.history.clear()
 
         x0_free = self.initial_nodes[self.free_nodes_idx].flatten()
+
         initial_obj = self._objective_wrapper(x0_free)
         self.history.append(initial_obj)
 
         bounds = [(0.0, 1.0)] * (2 * self.num_free_nodes)
 
         opt_res: OptimizeResult = minimize(
-            fun=self._objective_wrapper,
+            fun=self._objective_and_gradient_wrapper,
             x0=x0_free,
             method="L-BFGS-B",
+            jac=True,
             bounds=bounds,
             callback=self._callback,
             options={
                 "maxiter": self.max_iter,
+                "maxfun": max(15000, 50 * self.max_iter),
+                "maxls": 20,
                 "ftol": self.ftol,
                 "gtol": self.gtol,
                 "disp": False
             }
         )
+
         oracle_elapsed = time.perf_counter() - t_start
 
-        # Ricostruzione e safety filter
+        # Ricostruzione del candidato non ancora filtrato.
         candidate_nodes = self._reconstruct_full_nodes(opt_res.x)
         raw_displacement = candidate_nodes - self.initial_nodes
 
+        # Filtro geometrico di sicurezza.
         alpha, safe_nodes, is_safe, min_j = apply_safety_filter(
             nodes=self.initial_nodes,
             displacement=raw_displacement,
@@ -150,17 +182,34 @@ class OfflineMeshOptimizer:
         optimal_nodes = safe_nodes
         target_displacement = optimal_nodes - self.initial_nodes
 
+        # Metriche calcolate sulla mesh finale effettivamente restituita.
         final_metrics = self.objective.evaluate(optimal_nodes)
-        geom_summary = compute_mesh_metrics(optimal_nodes, self.cells)
+        geom_summary = compute_mesh_metrics(
+            optimal_nodes,
+            self.cells
+        )
 
         final_metrics.update({
-            "min_jacobian": float(np.min(geom_summary["jacobians"])),
-            "mean_jacobian": float(np.mean(geom_summary["jacobians"])),
-            "min_escobar_quality": float(np.min(geom_summary["escobar_quality"])),
-            "mean_escobar_quality": float(np.mean(geom_summary["escobar_quality"])),
-            "max_aspect_ratio": float(np.max(geom_summary["aspect_ratio"])),
-            "num_inverted_cells": int(np.sum(geom_summary["inverted"])),
+            "min_jacobian": float(
+                np.min(geom_summary["jacobians"])
+            ),
+            "mean_jacobian": float(
+                np.mean(geom_summary["jacobians"])
+            ),
+            "min_escobar_quality": float(
+                np.min(geom_summary["escobar_quality"])
+            ),
+            "mean_escobar_quality": float(
+                np.mean(geom_summary["escobar_quality"])
+            ),
+            "max_aspect_ratio": float(
+                np.max(geom_summary["aspect_ratio"])
+            ),
+            "num_inverted_cells": int(
+                np.sum(geom_summary["inverted"])
+            ),
             "safety_alpha_applied": float(alpha),
+            "safety_filter_accepted": bool(is_safe),
             "oracle_time_seconds": float(oracle_elapsed),
             "time_seconds": float(oracle_elapsed),
             "nit": int(getattr(opt_res, "nit", 0)),
@@ -168,15 +217,20 @@ class OfflineMeshOptimizer:
             "njev": int(getattr(opt_res, "njev", 0)),
             "success": bool(opt_res.success),
             "status": int(opt_res.status),
-            "message": str(opt_res.message)
+            "message": str(opt_res.message),
+            "gradient_method": "analytic"
         })
 
         return {
             "optimal_nodes": optimal_nodes,
             "target_displacement": target_displacement,
             "objective_history": self.history,
-            "final_objective": float(final_metrics["total_objective"]),
-            "converged": bool(opt_res.success and final_metrics["is_valid"]),
+            "final_objective": float(
+                final_metrics["total_objective"]
+            ),
+            "converged": bool(
+                opt_res.success and final_metrics["is_valid"]
+            ),
             "iterations": int(opt_res.nit),
             "final_metrics": final_metrics
         }

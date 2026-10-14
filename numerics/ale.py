@@ -1,8 +1,21 @@
 """
 numerics/ale.py
-Formulazione Arbitrary Lagrangian-Eulerian (ALE) FEM P1 conservativa con D-GCL.
-Discretizzazione temporale:
-    (1/dt) * (M^{n+1} u^{n+1} - M^n u^n) + C_{mesh} u^{n+1} + C_{phys} u^{n+1} + nu * K^{n+1} u^{n+1} = F^{n+1}
+Formulazione Arbitrary Lagrangian-Eulerian (ALE) FEM P1 conservativa conforme alla D-GCL.
+
+Deriva dal Teorema del Trasporto di Reynolds sulla configurazione mobile Omega(t):
+    d/dt int_{Omega(t)} u_h phi_i dx - int_{Omega(t)} div(w u_h) phi_i dx
+    + int_{Omega(t)} (b . grad u_h) phi_i dx + nu int_{Omega(t)} grad u_h . grad phi_i dx
+    = int_{Omega(t)} f phi_i dx
+
+Discretizzazione temporale totalmente discreta (Backward Euler + Midpoint GCL):
+    (1/dt) * (M^{n+1} U^{n+1} - M^n U^n)
+    + C_{mesh}^{n+1/2} U^{n+1} + C_{phys}^{n+1} U^{n+1} + nu * K^{n+1} U^{n+1} = F^{n+1}
+
+dove l'operatore cinematica di griglia valutato al punto medio X^{n+1/2} è:
+    C_{mesh}^{n+1/2} = - C_{adv}^{w, n+1/2} - M_{div}^{w, n+1/2}
+con:
+    (C_{adv}^{w, n+1/2})_{ij} = int_{Omega^{n+1/2}} phi_i (w^{n+1/2} . grad phi_j) dx
+    (M_{div}^{w, n+1/2})_{ij} = int_{Omega^{n+1/2}} (div w^{n+1/2}) phi_i phi_j dx
 """
 
 from typing import Tuple, Dict, Any
@@ -64,7 +77,7 @@ class ALESolver2D:
         w_nodes = self.compute_mesh_velocity(nodes_n, nodes_next, dt)
         nodes_mid = 0.5 * (nodes_n + nodes_next)
 
-        # 1. Geometria al midpoint per la cinematica convettiva
+        # 1. Geometria al midpoint X^{n+1/2} per la cinematica della griglia
         x1_m, y1_m = nodes_mid[cells[:, 0], 0], nodes_mid[cells[:, 0], 1]
         x2_m, y2_m = nodes_mid[cells[:, 1], 0], nodes_mid[cells[:, 1], 1]
         x3_m, y3_m = nodes_mid[cells[:, 2], 0], nodes_mid[cells[:, 2], 1]
@@ -73,8 +86,16 @@ class ALESolver2D:
         areas_mid = 0.5 * np.abs(det_J_mid)
         inv_det_m = 1.0 / det_J_mid
 
-        dphi_dx_m = np.column_stack([(y2_m - y3_m) * inv_det_m, (y3_m - y1_m) * inv_det_m, (y1_m - y2_m) * inv_det_m])
-        dphi_dy_m = np.column_stack([(x3_m - x2_m) * inv_det_m, (x1_m - x3_m) * inv_det_m, (x2_m - x1_m) * inv_det_m])
+        dphi_dx_m = np.column_stack([
+            (y2_m - y3_m) * inv_det_m,
+            (y3_m - y1_m) * inv_det_m,
+            (y1_m - y2_m) * inv_det_m
+        ])
+        dphi_dy_m = np.column_stack([
+            (x3_m - x2_m) * inv_det_m,
+            (x1_m - x3_m) * inv_det_m,
+            (x2_m - x1_m) * inv_det_m
+        ])
 
         w_elem = w_nodes[cells]
         div_w = (
@@ -91,8 +112,16 @@ class ALESolver2D:
         areas_next = 0.5 * np.abs(det_J_p)
         inv_det_p = 1.0 / det_J_p
 
-        dphi_dx_p = np.column_stack([(y2_p - y3_p) * inv_det_p, (y3_p - y1_p) * inv_det_p, (y1_p - y2_p) * inv_det_p])
-        dphi_dy_p = np.column_stack([(x3_p - x2_p) * inv_det_p, (x1_p - x3_p) * inv_det_p, (x2_p - x1_p) * inv_det_p])
+        dphi_dx_p = np.column_stack([
+            (y2_p - y3_p) * inv_det_p,
+            (y3_p - y1_p) * inv_det_p,
+            (y1_p - y2_p) * inv_det_p
+        ])
+        dphi_dy_p = np.column_stack([
+            (x3_p - x2_p) * inv_det_p,
+            (x1_p - x3_p) * inv_det_p,
+            (x2_p - x1_p) * inv_det_p
+        ])
 
         # 3. Geometria su t^n
         x1_n, y1_n = nodes_n[cells[:, 0], 0], nodes_n[cells[:, 0], 1]
@@ -101,15 +130,19 @@ class ALESolver2D:
         areas_n = 0.5 * np.abs((x2_n - x1_n) * (y3_n - y1_n) - (x3_n - x1_n) * (y2_n - y1_n))
 
         # Matrici di massa locali coerenti
-        base_M = np.array([[2.0, 1.0, 1.0], [1.0, 2.0, 1.0], [1.0, 1.0, 2.0]], dtype=np.float64) / 12.0
+        base_M = np.array([
+            [2.0, 1.0, 1.0],
+            [1.0, 2.0, 1.0],
+            [1.0, 1.0, 2.0]
+        ], dtype=np.float64) / 12.0
         M_elem_next = areas_next[:, None, None] * base_M[None, :, :]
-        M_elem_n = areas_n[:, None, None] * base_M[None, :, :]
 
         M_next = self.assemble_mass_matrix(mesh_next)
         M_n = self.assemble_mass_matrix(mesh_n)
 
-        # 4. Operatore di Convezione di Griglia C_{mesh}(w)
-        # Il termine avvettivo debole standard: - int phi_i (w . grad phi_j)
+        # 4. Operatore Conservativo di Convezione di Griglia C_{mesh}^{n+1/2}(w)
+        # C_{mesh, ij} = - int_{K_e^{n+1/2}} phi_i div(w phi_j) dx
+        #              = - int_{K_e^{n+1/2}} phi_i (w . grad phi_j) dx - int_{K_e^{n+1/2}} (div w) phi_i phi_j dx
         qp_ref, qw_ref = _get_triangle_quadrature_degree_5()
         C_adv = np.zeros((num_cells, 3, 3), dtype=np.float64)
 
@@ -120,11 +153,11 @@ class ALESolver2D:
             term = phi[:, None] * w_dot_grad[:, None, :]
             C_adv += (2.0 * weight) * (areas_mid[:, None, None] * term)
 
-        # Compensazione D-GCL analitica:
-        # Affinché (M^{n+1} - M^n)/dt @ 1 + C_mesh @ 1 = 0, poiché C_adv @ 1 = 0 identicamente,
-        # la variazione della massa elementare viene bilanciata algebricamente:
-        delta_M_elem = (M_elem_next - M_elem_n) / dt
-        C_mesh_elem = - C_adv - delta_M_elem
+        # Termine variazionale di dilatazione cinematica valutato sul midpoint X^{n+1/2}:
+        # M_{div, e}^{w, n+1/2} = |K_e^{n+1/2}| * (div w^{n+1/2})_e * base_M
+        # (Non usa M_elem_next - M_elem_n, rendendo la verifica D-GCL indipendente e genuina)
+        M_div_w_elem = (areas_mid * div_w)[:, None, None] * base_M[None, :, :]
+        C_mesh_elem = -C_adv - M_div_w_elem
 
         # 5. Convezione fisica e diffusione su t^{n+1}
         C_phys_elem = np.zeros((num_cells, 3, 3), dtype=np.float64)
@@ -144,7 +177,10 @@ class ALESolver2D:
                     F_elem += (2.0 * weight) * (areas_next[:, None] * f_val[:, None] * phi[None, :])
 
             if self.nu > 0.0:
-                grad_dot = (dphi_dx_p[:, :, None] * dphi_dx_p[:, None, :] + dphi_dy_p[:, :, None] * dphi_dy_p[:, None, :])
+                grad_dot = (
+                    dphi_dx_p[:, :, None] * dphi_dx_p[:, None, :] +
+                    dphi_dy_p[:, :, None] * dphi_dy_p[:, None, :]
+                )
                 K_elem = self.nu * (areas_next[:, None, None] * grad_dot)
 
         # 6. Assemblaggio matriciale globale: A = (1/dt)*M^{n+1} + C_mesh + C_phys + K
@@ -161,11 +197,17 @@ class ALESolver2D:
             np.add.at(F_vec, cells[:, 2], F_elem[:, 2])
 
         C_mesh_mat = sp.coo_matrix((C_mesh_elem.flatten(), (rows, cols)), shape=(num_nodes, num_nodes)).tocsr()
+        C_adv_mat = sp.coo_matrix((C_adv.flatten(), (rows, cols)), shape=(num_nodes, num_nodes)).tocsr()
+        M_div_w_mat = sp.coo_matrix((M_div_w_elem.flatten(), (rows, cols)), shape=(num_nodes, num_nodes)).tocsr()
+
         r_elem = np.abs((areas_next - areas_n) / dt - areas_mid * div_w)
 
         diagnostics = {
             "max_elem_gcl_residual": float(np.max(r_elem)),
-            "C_mesh_mat": C_mesh_mat
+            "C_mesh_mat": C_mesh_mat,
+            "C_adv_mat": C_adv_mat,
+            "M_div_w_mat": M_div_w_mat,
+            "M_next": M_next,
         }
 
         return A_mat, M_n, F_vec, diagnostics
@@ -177,7 +219,8 @@ class ALESolver2D:
         u_n: np.ndarray,
         dt: float,
         t_next: float,
-        pure_gcl: bool = False
+        pure_gcl: bool = False,
+        enforce_dirichlet: bool = True
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         A_mat, M_n, F_vec, diag = self.assemble_ale_system(
             mesh_n, mesh_next, dt, t_next, pure_gcl=pure_gcl
@@ -185,26 +228,29 @@ class ALESolver2D:
 
         # Termine temporale rigorosamente conservativo: (1/dt) * M^n @ u^n + F^{n+1}
         rhs = (1.0 / dt) * (M_n @ u_n) + F_vec
-        bnd_nodes = mesh_next.boundary_nodes
 
-        if pure_gcl:
-            u_bnd = np.ones(len(bnd_nodes), dtype=np.float64)
+        if enforce_dirichlet:
+            bnd_nodes = mesh_next.boundary_nodes
+            if pure_gcl:
+                u_bnd = np.ones(len(bnd_nodes), dtype=np.float64)
+            else:
+                u_bnd = self.pde.evaluate_solution(
+                    mesh_next.nodes[bnd_nodes, 0],
+                    mesh_next.nodes[bnd_nodes, 1],
+                    t_next
+                )
+
+            # Condizioni di Dirichlet
+            rhs = rhs - A_mat[:, bnd_nodes] @ u_bnd
+            rhs[bnd_nodes] = u_bnd
+
+            A_mod = A_mat.tolil()
+            A_mod[bnd_nodes, :] = 0.0
+            A_mod[:, bnd_nodes] = 0.0
+            A_mod[bnd_nodes, bnd_nodes] = 1.0
+            A_mod = A_mod.tocsr()
         else:
-            u_bnd = self.pde.evaluate_solution(
-                mesh_next.nodes[bnd_nodes, 0],
-                mesh_next.nodes[bnd_nodes, 1],
-                t_next
-            )
-
-        # Condizioni di Dirichlet
-        rhs = rhs - A_mat[:, bnd_nodes] @ u_bnd
-        rhs[bnd_nodes] = u_bnd
-
-        A_mod = A_mat.tolil()
-        A_mod[bnd_nodes, :] = 0.0
-        A_mod[:, bnd_nodes] = 0.0
-        A_mod[bnd_nodes, bnd_nodes] = 1.0
-        A_mod = A_mod.tocsr()
+            A_mod = A_mat
 
         u_next = spla.spsolve(A_mod, rhs)
         return u_next, diag
