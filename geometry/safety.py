@@ -9,9 +9,8 @@ lungo la traiettoria:
 
 Determina:
     alpha_global = min_e alpha_e^*
-garantendo in modo esatto e verificabile:
-    min_e J_e(X_safe) >= epsilon
-senza ottimizzazioni iterative a runtime.
+certificando l'ammissibilità geometrica lungo la traiettoria (entro la tolleranza
+di arrotondamento float64 specificata) con verifica a posteriori.
 """
 
 from typing import Tuple
@@ -78,7 +77,7 @@ def apply_safety_filter(
         )
 
     # Controllo rapido DOPO aver certificato la mesh iniziale: se lo spostamento è nullo, uscita immediata
-    if np.max(np.abs(displacement)) < tol_deg:
+    if np.max(np.abs(displacement)) == 0.0:
         return 1.0, nodes.copy(), True, min_c
 
     # 2. Coefficienti del polinomio quadratico J_e(alpha) = A_e * alpha^2 + B_e * alpha + C_e
@@ -92,7 +91,7 @@ def apply_safety_filter(
     A = du1 * dv2 - du2 * dv1
     B = (u1 * dv2 + du1 * v2) - (u2 * dv1 + du2 * v1)
 
-    # Termine noto traslato rispetto alla soglia nominale esatta epsilon:
+    # Termine noto traslato rispetto alla soglia nominale epsilon:
     # q_e(alpha) = A_e * alpha^2 + B_e * alpha + C_tilde >= 0
     C_tilde = np.maximum(0.0, C - eps)
     alpha_e = np.ones(num_cells, dtype=np.float64)
@@ -101,15 +100,25 @@ def apply_safety_filter(
     # 3. Elementi già sulla soglia iniziale (C_tilde == 0)
     # -------------------------------------------------------------------------
     on_boundary = C_tilde <= 0.0
-    # Se la derivata prima B < 0 (o B == 0 e A < 0), q_e(alpha) scende subito sotto zero per alpha > 0
-    immediate_violation = on_boundary & ((B < -tol_deg) | ((np.abs(B) <= tol_deg) & (A < -tol_deg)))
+
+    # Regola conservativa sul bordo: se B < 0 (anche per |B| <= tol_deg) oppure se
+    # |B| <= tol_deg e A < 0, il polinomio q_e(alpha) = alpha*(B + A*alpha) diventa
+    # negativo per alpha > 0 sufficientemente piccolo -> imponiamo alpha_e = 0.0.
+    immediate_violation = on_boundary & (
+        (B < 0.0) | ((np.abs(B) <= tol_deg) & (A < 0.0))
+    )
     alpha_e[immediate_violation] = 0.0
 
-    # Se C_tilde == 0, B > 0 ma A < 0, la parabola sale e poi riattraversa zero in alpha = -B / A
-    boundary_arch = on_boundary & (B > tol_deg) & (A < -tol_deg)
+    # Se C_tilde == 0, B > tol_deg ma A < 0, la parabola sale e poi riattraversa zero in alpha = -B / A
+    boundary_arch = on_boundary & (~immediate_violation) & (B > 0.0) & (A < 0.0)
     if np.any(boundary_arch):
-        r_arch = -B[boundary_arch] / A[boundary_arch]
-        alpha_e[boundary_arch] = np.where((r_arch > 0.0) & (r_arch <= 1.0), r_arch, 1.0)
+        # Evita overflow se -B >= -A (radice >= 1.0)
+        B_b = B[boundary_arch]
+        A_b = A[boundary_arch]
+        crosses_before_one = B_b < -A_b
+        r_arch = np.ones_like(B_b)
+        r_arch[crosses_before_one] = -B_b[crosses_before_one] / A_b[crosses_before_one]
+        alpha_e[boundary_arch] = r_arch
 
     # -------------------------------------------------------------------------
     # 4. Elementi strettamente interni (C_tilde > 0)
@@ -117,12 +126,12 @@ def apply_safety_filter(
     strictly_inside = ~on_boundary
 
     # CASO 4.1: Regime lineare (|A| < tol_deg)
+    # Se B < 0 e C_tilde + B < 0, l'intersezione r_lin = -C_tilde / B cade in (0, 1)
     is_linear = strictly_inside & (np.abs(A) < tol_deg)
-    mask_lin_down = is_linear & (B < -tol_deg)
+    mask_lin_down = is_linear & (B < 0.0) & ((C_tilde + B) <= 0.0)
     if np.any(mask_lin_down):
         r_lin = -C_tilde[mask_lin_down] / B[mask_lin_down]
-        # Poiché C_tilde > 0 e B < 0, r_lin è strettamente positiva (anche se molto piccola)
-        alpha_e[mask_lin_down] = np.where(r_lin <= 1.0, r_lin, 1.0)
+        alpha_e[mask_lin_down] = np.clip(r_lin, 0.0, 1.0)
 
     # CASO 4.2: Regime quadratico genuino (|A| >= tol_deg)
     is_quad = strictly_inside & (np.abs(A) >= tol_deg)
@@ -154,7 +163,7 @@ def apply_safety_filter(
         r1 = np.where(np.abs(q) > 0.0, q / A_q, 2.0)
         r2 = np.where(np.abs(q) > 0.0, C_q / safe_q, 2.0)
 
-        # Poiché C_q > 0, qualsiasi radice reale positiva r > 0 (anche < 1e-15) è un'intersezione genuina
+        # Qualsiasi radice reale positiva r in (0, 1] è un'intersezione genuina
         r1_valid = np.where((r1 > 0.0) & (r1 <= 1.0), r1, 2.0)
         r2_valid = np.where((r2 > 0.0) & (r2 <= 1.0), r2, 2.0)
         r_first = np.minimum(r1_valid, r2_valid)
@@ -184,7 +193,7 @@ def apply_safety_filter(
 
     nodes_safe, min_j_after = _compute_min_j(alpha_global)
 
-    # Salvaguardia esatta a posteriori contro roundoff float64 in casi estremi
+    # Salvaguardia a posteriori contro roundoff float64 in casi estremi
     if min_j_after < eps - roundoff_tol:
         is_safe = False
         if alpha_global == 1.0:

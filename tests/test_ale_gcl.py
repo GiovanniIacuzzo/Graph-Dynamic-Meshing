@@ -66,7 +66,6 @@ def test_c1_mesh_motion_verification():
     mesh = create_initial_mesh_2d(domain, nx=32, ny=32)
     nodes_0 = mesh.nodes.copy()
 
-    # Verifica che a t=0 la mesh coincida esattamente con quella iniziale
     nodes_at_zero = analytical_mesh_motion(nodes_0, 0.0, T=0.5, A=0.02)
     np.testing.assert_allclose(nodes_at_zero, nodes_0, atol=1e-15)
 
@@ -90,6 +89,7 @@ def test_c1_mesh_motion_verification():
     print(f"Errore Relativo L2 Velocita' : {err_l2:.4e}")
     print(f"Errore Max Linf Velocita'    : {err_linf:.4e}")
 
+    assert np.isfinite(err_l2) and np.isfinite(err_linf)
     assert err_l2 < 5e-3
 
 
@@ -133,13 +133,15 @@ def test_c2_discrete_gcl():
 
         ones_vec = np.ones(next_mesh.num_nodes, dtype=np.float64)
 
-        # C_mesh è assemblato usando solo div(w^{n+1/2}) sul punto medio,
-        # quindi il confronto con (M^{n+1} - M^n)/dt è un test indipendente:
         algebraic_residual_vec = ((M_next - M_n) @ ones_vec) / dt + C_mesh @ ones_vec
         step_algebraic_residual = float(np.linalg.norm(algebraic_residual_vec, ord=np.inf))
+        step_elem_residual = float(diag["max_elem_gcl_residual"])
+
+        if not (np.isfinite(step_algebraic_residual) and np.isfinite(step_elem_residual)):
+            raise AssertionError(f"Residui GCL non finiti al passo {step}.")
 
         max_algebraic_residual = max(max_algebraic_residual, step_algebraic_residual)
-        max_elem_residual = max(max_elem_residual, float(diag["max_elem_gcl_residual"]))
+        max_elem_residual = max(max_elem_residual, step_elem_residual)
 
         # 2. Test end-to-end su u = 1
         u_next, _ = ale_solver.step_ale(
@@ -150,6 +152,9 @@ def test_c2_discrete_gcl():
             raise AssertionError(f"Il solver ALE ha prodotto valori non finiti al passo {step}.")
 
         step_free_stream_error = float(np.max(np.abs(u_next - 1.0)))
+        if not np.isfinite(step_free_stream_error):
+            raise AssertionError(f"Errore free-stream non finito al passo {step}.")
+
         max_free_stream_error = max(max_free_stream_error, step_free_stream_error)
 
         u_current = u_next
@@ -182,13 +187,13 @@ def test_c2b_discrete_mass_conservation():
 
     ale_solver = ALESolver2D(pde_model=None, nu=0.0, bx=0.0, by=0.0)
 
-    # Impulso gaussiano non uniforme centrato nel dominio
     x0, y0 = nodes_0[:, 0], nodes_0[:, 1]
     u_current = np.exp(-((x0 - 0.5) ** 2 + (y0 - 0.5) ** 2) / (2.0 * 0.08 ** 2))
 
     M_0 = ale_solver.assemble_mass_matrix(mesh_0)
     ones_vec = np.ones(mesh_0.num_nodes, dtype=np.float64)
     initial_mass = float(ones_vec @ (M_0 @ u_current))
+    assert np.isfinite(initial_mass) and initial_mass > 0.0
 
     T = 0.5
     dt = 0.005
@@ -203,7 +208,6 @@ def test_c2b_discrete_mass_conservation():
         nodes_next = analytical_mesh_motion(nodes_0, t_next, T=T, A=0.02)
         next_mesh = mesh_0.update_coordinates(nodes_next)
 
-        # Evoluzione conservativa pura senza forzatura di Dirichlet al bordo (w|_dOmega = 0)
         u_next, diag = ale_solver.step_ale(
             current_mesh,
             next_mesh,
@@ -214,15 +218,21 @@ def test_c2b_discrete_mass_conservation():
             enforce_dirichlet=False
         )
 
+        if not np.all(np.isfinite(u_next)):
+            raise AssertionError(f"Valori non finiti nel test C2b al passo {step}.")
+
         C_mesh = diag["C_mesh_mat"]
         M_next = diag["M_next"]
 
-        # 1. Verifica che 1^T C_mesh = 0^T (conservazione per qualunque campo U^{n+1})
         dual_res = float(np.max(np.abs(ones_vec @ C_mesh)))
+        if not np.isfinite(dual_res):
+            raise AssertionError(f"Residuo duale non finito al passo {step}.")
         max_dual_op_residual = max(max_dual_op_residual, dual_res)
 
-        # 2. Verifica che m_h^{n+1} = 1^T M^{n+1} U^{n+1} == m_h^0
         current_mass = float(ones_vec @ (M_next @ u_next))
+        if not np.isfinite(current_mass):
+            raise AssertionError(f"Massa discreta non finita al passo {step}.")
+
         mass_drift = abs(current_mass - initial_mass) / abs(initial_mass)
         max_mass_drift = max(max_mass_drift, mass_drift)
 
