@@ -1,32 +1,27 @@
 name: gdm_env
 channels:
+  - pytorch
+  - pyg
   - conda-forge
   - defaults
-
 dependencies:
-  # Interprete Python
   - python=3.10
   - pip
-
-  # Calcolo scientifico, algebra lineare e ottimizzazione numerica
-  - numpy>=1.24.0,<2.0.0
-  - scipy>=1.11.0
-
-  # PyTorch su macOS (include il backend nativo MPS)
-  - pytorch>=2.1.0
-  - torchvision
-  - torchaudio
-
-  # Visualizzazione ed esportazione
-  - matplotlib>=3.8.0
-
-  # I/O e serializzazione
+  - setuptools>=64
+  - wheel
+  # Core scientific stack
+  - numpy>=1.24
+  - scipy>=1.10
+  - matplotlib>=3.7
   - pyyaml>=6.0
-  - h5py>=3.10.0
-
+  - tqdm>=4.65
+  # PyTorch & PyTorch Geometric (risolti dai canali dedicati pytorch / pyg)
+  - pytorch>=2.0
+  - pyg>=2.3
+  # Build tools & C++ bindings (risolti da conda-forge)
+  - pybind11>=2.11
+  - cmake>=3.20
+  - ninja>=1.11
   # Testing
-  - pytest>=7.4.0
-  - pytest-cov>=4.1.0
-
-  - pip:
-      - tqdm>=4.66.0
+  - pytest>=7.0
+  - pytest-cov>=4.0

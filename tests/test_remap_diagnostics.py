@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.utils import ensure_dir
 from generate_dataset import create_initial_mesh_2d
 from geometry.safety import apply_safety_filter
+from geometry.geometry import compute_mesh_metrics
 from numerics.pde import ManufacturedConvectionDiffusion2D
 from numerics.remap import remap_p1_solution
 
@@ -188,21 +189,27 @@ def test_r5_single_vs_cumulative():
         curr_nodes = mesh_init.nodes.copy()
         u_cum = u_exact_init.copy()
 
+        min_alpha = 1.0
         for step in range(n_steps):
             disp = np.zeros_like(mesh_init.nodes)
             disp[free_idx, 0] = 0.002 * np.sin((step + 1) * curr_nodes[free_idx, 1])
             disp[free_idx, 1] = 0.002 * np.cos((step + 1) * curr_nodes[free_idx, 0])
 
-            _, next_nodes, is_safe, _ = apply_safety_filter(curr_nodes, disp, mesh_init.cells, epsilon=1e-4)
-            assert is_safe
+            alpha, next_nodes, _, _ = apply_safety_filter(
+                curr_nodes, disp, mesh_init.cells, epsilon=1e-4)
+
+            geom = compute_mesh_metrics(next_nodes, mesh_init.cells)
+            assert int(np.sum(geom["inverted"])) == 0
+            assert float(np.min(geom["jacobians"])) >= 1e-4
+            min_alpha = min(min_alpha, alpha)
 
             u_cum = remap_p1_solution(curr_nodes, mesh_init.cells, u_cum, next_nodes)
             curr_nodes = next_nodes
 
-        # Soluzione esatta sulla geometria deformata finale
-        u_exact_final = pde.evaluate_solution(curr_nodes[:, 0], curr_nodes[:, 1], t)
+            u_cum = remap_p1_solution(curr_nodes, mesh_init.cells, u_cum, next_nodes)
+            curr_nodes = next_nodes
 
-        # Remap diretto (1 solo step partendo dalla mesh iniziale)
+        u_exact_final = pde.evaluate_solution(curr_nodes[:, 0], curr_nodes[:, 1], t)
         u_direct = remap_p1_solution(mesh_init.nodes, mesh_init.cells, u_exact_init, curr_nodes)
 
         err_cum = float(np.linalg.norm(u_cum - u_exact_final) / np.linalg.norm(u_exact_final))
@@ -221,7 +228,6 @@ def test_r5_single_vs_cumulative():
     out_dir = ensure_dir("results/stage_b/diagnostics")
     with open(out_dir / "remap_diagnostics_r1_r5.json", "w", encoding="utf-8") as f:
         json.dump(out_table, f, indent=2)
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-s", "-v"])

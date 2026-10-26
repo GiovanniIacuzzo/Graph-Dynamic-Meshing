@@ -1,69 +1,10 @@
-# =============================================================================
-# Python & Bytecode Cache
-# =============================================================================
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# =============================================================================
-# PyTest & Testing Cache
-# =============================================================================
 .pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-*.cover
-
-# =============================================================================
-# Dataset generati e file temporanei
-# =============================================================================
-data/raw/*.pkl
-data/processed/*.pkl
-data/processed/*.pt
-data/raw_oracle_v2/
-manifest_oracle_v2.json
-!data/manifest.json
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-
-# =============================================================================
-# Risultati di esecuzione, Checkpoint di Training e Log
-# =============================================================================
-results/*
-!results/.gitkeep
-*.log
-*.pt
-*.pth
-*.h5
-*.hdf5
-
-# =============================================================================
-# macOS System Files (Apple Silicon / Finder)
-# =============================================================================
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-
-# =============================================================================
-# Ambienti Virtuali & IDE
-# =============================================================================
-.env
-.venv
-idea.md
-env/
-venv/
-ENV/
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# =============================================================================
-# File temporanei generati da Conda durante l'installazione
-# =============================================================================
-condaenv.*.requirements.txt
+build-check-971/
+codici/
+data/
+results/
 compiler/
+CMakeLists.txt.before_dealii_compat.bak
+idea.md
+.DS_Store

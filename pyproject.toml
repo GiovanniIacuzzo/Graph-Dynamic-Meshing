@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gdm"
+version = "0.1.0"
+description = "Graph Dynamic Meshing (GDM): conservative ALE and neural r-adaptation"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+    "torch>=2.0",
+    "torch-geometric>=2.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pybind11>=2.11",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+"" = "python"
+dataset = "dataset"
+model = "model"
+utils = "utils"
+
+[tool.setuptools.packages.find]
+where = ["python", "."]
+include = [
+    "geometry*",
+    "numerics*",
+    "oracle*",
+    "evaluation*",
+    "gdm*",
+    "dataset*",
+    "model*",
+    "utils*",
+]
+
+[tool.setuptools.package-data]
+gdm = ["*.so", "*.pyd", "*.dylib"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

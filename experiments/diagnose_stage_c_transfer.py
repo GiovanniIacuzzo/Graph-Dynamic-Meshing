@@ -1,233 +1,131 @@
-#!/usr/bin/env python3
 """
-Diagnostica del trasferimento Stage A -> Stage C.
-
-Confronta la mesh iniziale e la mesh predetta dalla GNN sulla
-soluzione analitica della PDE MMS, senza avanzamento temporale.
-
-Per ogni istante vengono confrontati:
-    - errore di interpolazione P1 sulla mesh fissa;
-    - errore di interpolazione P1 sulla mesh GNN;
-    - spostamento nodale effettivo dopo il safety filter;
-    - alpha globale di sicurezza;
-    - Jacobiano minimo della mesh adattata.
-
-Due varianti:
-    1. Gradiente FEM, corrispondente alla pipeline Stage C.
-    2. Gradiente analitico, come controllo diagnostico.
-
-Il test non modifica checkpoint o dataset e non esegue training.
+experiments/diagnose_stage_c_transfer.py
+Script di isolamento per diagnosticare se la perdita di accuratezza in Stage C
+deriva dal remapping P1, dalla frequenza di adattamento o dalla dinamica dei nodi.
 """
 
-import sys
 from pathlib import Path
-
 import numpy as np
-
-# Consente l'esecuzione diretta dalla radice del repository.
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 from utils.utils import load_config
 from generate_dataset import create_initial_mesh_2d
 from numerics.pde import ManufacturedConvectionDiffusion2D
-from numerics.fem import compute_field_gradients
+from numerics.fem import ConvectionDiffusionFEM2D, compute_field_gradients
+from numerics.remap import remap_p1_solution
+from numerics.remap_l2 import remap_l2_projection
 from numerics.dynamic_solver import compute_continuous_errors
-from geometry.geometry import compute_mesh_metrics
 from inference import MeshMoverInferenceEngine
 
 
-def main():
-    # ---------------------------------------------------------
-    # 1. Configurazione coerente con Stage C
-    # ---------------------------------------------------------
-    config_path = ROOT / "config" / "config.yaml"
-    checkpoint_path = (
-        ROOT / "results" / "stage_a" / "checkpoints" / "best_model.pt"
-    )
-
-    if not config_path.exists():
-        raise FileNotFoundError(
-            f"Configurazione non trovata: {config_path}"
-        )
-
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"Checkpoint non trovato: {checkpoint_path}"
-        )
-
-    config = load_config(str(config_path))
-
+def run_diagnostic():
+    config = load_config("config/config.yaml")
     domain = config["geometry"]["domain"]
-    grid_cfg = config["geometry"]["initial_grid"]
+    checkpoint = Path("results/stage_a/checkpoints/best_model.pt")
+    engine = MeshMoverInferenceEngine(checkpoint, config, device="cpu")
 
-    nx = int(grid_cfg["nx"])
-    ny = int(grid_cfg["ny"])
-    h = max(1.0 / nx, 1.0 / ny)
-
-    # Stessi parametri della PDE definiti in stage_c_campaign.py.
     pde = ManufacturedConvectionDiffusion2D(
-        bx=0.4,
-        by=0.2,
-        nu=1e-3,
-        sigma=0.06,
-        beta=0.5,
-        T=0.5,
+        bx=0.4, by=0.2, nu=1e-3, sigma=0.06, beta=0.5, T=0.5
     )
 
-    # La campagna Stage C originale usa CPU per l'inferenza.
-    engine = MeshMoverInferenceEngine(
-        checkpoint_path=checkpoint_path,
-        config=config,
-        device="cpu",
+    mesh_init = create_initial_mesh_2d(domain, nx=32, ny=32)
+    u_exact_0 = pde.evaluate_solution(mesh_init.nodes[:, 0], mesh_init.nodes[:, 1], 0.0)
+
+    # -------------------------------------------------------------------------
+    # TEST 1: Crollo di accuratezza per P1 vs L2 su 10 adattamenti STATICI a t=0
+    # (Senza alcuna evoluzione PDE, solo proiezioni ripetute avanti/indietro)
+    # -------------------------------------------------------------------------
+    print("\n" + "=" * 75)
+    print("DIAGNOSTICA 1: ACCUMULO ERRORE DI PURO REMAPPING (10 cicli a t = 0)")
+    print("=" * 75)
+
+    grad_0 = compute_field_gradients(mesh_init, u_exact_0, pde, 0.0, gradient_mode="fem")
+    pred_0 = engine.predict(mesh_init, u_exact_0, grad_0)
+    mesh_adapted = pred_0["adapted_mesh"]
+
+    err_init_l2, _ = compute_continuous_errors(mesh_init, u_exact_0, pde, 0.0)
+    print(f"Errore L2 continuo iniziale su griglia 32x32 fissa : {err_init_l2*100:.4f}%")
+
+    # A) 1 singolo step di Remap verso la mesh adattata
+    u_p1_1 = remap_p1_solution(mesh_init.nodes, mesh_init.cells, u_exact_0, mesh_adapted.nodes)
+    u_l2_1 = remap_l2_projection(
+        mesh_init.nodes, mesh_init.cells, u_exact_0, mesh_adapted.nodes, mesh_adapted.cells
     )
+    e_p1_1, _ = compute_continuous_errors(mesh_adapted, u_p1_1, pde, 0.0)
+    e_l2_1, _ = compute_continuous_errors(mesh_adapted, u_l2_1, pde, 0.0)
+    print(f"Dopo 1 Remap  -> Errore P1: {e_p1_1*100:.4f}% | Errore L2: {e_l2_1*100:.4f}%")
 
-    times = [0.0, 0.25, 0.5]
-
-    print("=" * 100)
-    print("DIAGNOSTICA DEL TRASFERIMENTO GNN STAGE A -> STAGE C")
-    print("=" * 100)
-    print(f"Checkpoint: {checkpoint_path}")
-    print(f"Mesh iniziale: {nx} x {ny}")
-    print(f"Tempi analizzati: {times}")
-    print()
-
-    # ---------------------------------------------------------
-    # 2. Mesh di riferimento uniforme
-    # ---------------------------------------------------------
-    reference_mesh = create_initial_mesh_2d(
-        domain,
-        nx=nx,
-        ny=ny,
-    )
-
-    # ---------------------------------------------------------
-    # 3. Diagnostica indipendente a ogni istante
-    # ---------------------------------------------------------
-    for t in times:
-
-        print("-" * 100)
-        print(f"TEMPO t = {t:.3f}")
-        print("-" * 100)
-
-        # Valori analitici ai nodi della mesh iniziale.
-        u_fixed = pde.evaluate_solution(
-            reference_mesh.nodes[:, 0],
-            reference_mesh.nodes[:, 1],
-            t,
+    # B) 10 cicli alternati (mesh_init <-> mesh_adapted) come avviene in 10 adattamenti
+    u_p1_loop = u_exact_0.copy()
+    u_l2_loop = u_exact_0.copy()
+    for _ in range(5):
+        u_p1_loop = remap_p1_solution(
+            mesh_init.nodes, mesh_init.cells, u_p1_loop, mesh_adapted.nodes
+        )
+        u_p1_loop = remap_p1_solution(
+            mesh_adapted.nodes, mesh_adapted.cells, u_p1_loop, mesh_init.nodes
         )
 
-        # Errore della semplice interpolazione P1 sulla mesh fissa.
-        err_fixed, _ = compute_continuous_errors(
-            reference_mesh,
-            u_fixed,
-            pde,
-            t,
+        u_l2_loop = remap_l2_projection(
+            mesh_init.nodes, mesh_init.cells, u_l2_loop, mesh_adapted.nodes, mesh_adapted.cells
+        )
+        u_l2_loop = remap_l2_projection(
+            mesh_adapted.nodes, mesh_adapted.cells, u_l2_loop, mesh_init.nodes, mesh_init.cells
         )
 
-        # Gradiente ottenuto con lo stesso metodo della campagna C.
-        grad_fem = compute_field_gradients(
-            mesh=reference_mesh,
-            u=u_fixed,
-            pde=pde,
-            t=t,
-            gradient_mode="fem",
-        )
+    e_p1_10, _ = compute_continuous_errors(mesh_init, u_p1_loop, pde, 0.0)
+    e_l2_10, _ = compute_continuous_errors(mesh_init, u_l2_loop, pde, 0.0)
+    print(f"Dopo 10 Remap -> Errore P1: {e_p1_10*100:.4f}% | Errore L2: {e_l2_10*100:.4f}%")
+    print(f"Picco massimo soluzione -> Esatto: {u_exact_0.max():.4f} | P1: {u_p1_loop.max():.4f} | L2: {u_l2_loop.max():.4f}")
 
-        # Gradiente analitico, usato soltanto come confronto.
-        _, ux_exact, uy_exact, _, _, _, _ = pde.evaluate_exact(
-            reference_mesh.nodes[:, 0],
-            reference_mesh.nodes[:, 1],
-            t,
-        )
+    # -------------------------------------------------------------------------
+    # TEST 2: Cosa succede se adattiamo a t=0 con SOLUZIONE ESATTA su nuova mesh
+    # e poi evolviamo con FEM? (Isola il guadagno geometrico della mesh GNN)
+    # -------------------------------------------------------------------------
+    print("\n" + "=" * 75)
+    print("DIAGNOSTICA 2: EVOLUZIONE DINAMICA (dt=0.005, 100 step) CON DIVERSI TRASFERIMENTI")
+    print("=" * 75)
 
-        grad_exact = np.column_stack(
-            [ux_exact, uy_exact]
-        )
+    dt = 0.005
+    n_steps = 100
 
-        cases = [
-            ("FEM gradient", grad_fem),
-            ("Exact gradient", grad_exact),
-        ]
+    for mode_label in ["FIXED", "GDM_P1_REMAP", "GDM_L2_REMAP", "GDM_EXACT_REINIT"]:
+        curr_mesh = create_initial_mesh_2d(domain, nx=32, ny=32)
+        u_curr = pde.evaluate_solution(curr_mesh.nodes[:, 0], curr_mesh.nodes[:, 1], 0.0)
+        solver = ConvectionDiffusionFEM2D(curr_mesh, pde)
 
-        print(
-            f"{'Input gradient':<18}"
-            f"{'E fixed [%]':>13}"
-            f"{'E adapted [%]':>16}"
-            f"{'Change [%]':>13}"
-            f"{'alpha':>10}"
-            f"{'RMS disp/h':>13}"
-            f"{'min J':>13}"
-        )
+        for step in range(1, n_steps + 1):
+            t_curr = (step - 1) * dt
+            t_next = step * dt
 
-        for label, grad_u in cases:
+            if mode_label != "FIXED" and step % 10 == 0:
+                grad_u = compute_field_gradients(curr_mesh, u_curr, pde, t_curr, gradient_mode="fem")
+                pred = engine.predict(curr_mesh, u_curr, grad_u)
+                new_mesh = pred["adapted_mesh"]
 
-            # Predizione GNN + safety filter.
-            prediction = engine.predict(
-                mesh=reference_mesh,
-                u=u_fixed,
-                grad_u=grad_u,
-            )
-
-            adapted_mesh = prediction["adapted_mesh"]
-
-            # Campo esatto valutato ai nuovi nodi.
-            u_adapted_exact = pde.evaluate_solution(
-                adapted_mesh.nodes[:, 0],
-                adapted_mesh.nodes[:, 1],
-                t,
-            )
-
-            # Errore P1 continuo sulla mesh adattata.
-            err_adapted, _ = compute_continuous_errors(
-                adapted_mesh,
-                u_adapted_exact,
-                pde,
-                t,
-            )
-
-            # Riduzione positiva = miglioramento.
-            relative_change = (
-                100.0
-                * (err_fixed - err_adapted)
-                / max(err_fixed, 1e-14)
-            )
-
-            # Spostamento realmente applicato dopo il safety filter.
-            actual_disp = (
-                adapted_mesh.nodes - reference_mesh.nodes
-            )
-
-            rms_displacement = float(
-                np.sqrt(
-                    np.mean(
-                        np.sum(actual_disp**2, axis=1)
+                if mode_label == "GDM_P1_REMAP":
+                    u_curr = remap_p1_solution(
+                        curr_mesh.nodes, curr_mesh.cells, u_curr, new_mesh.nodes
                     )
+                elif mode_label == "GDM_L2_REMAP":
+                    u_curr = remap_l2_projection(
+                        curr_mesh.nodes, curr_mesh.cells, u_curr, new_mesh.nodes, new_mesh.cells
+                    )
+                elif mode_label == "GDM_EXACT_REINIT":
+                    # Caso ideale senza errore di trasferimento
+                    u_curr = pde.evaluate_solution(new_mesh.nodes[:, 0], new_mesh.nodes[:, 1], t_curr)
+
+                b_nodes = np.asarray(new_mesh.boundary_nodes, dtype=np.int64)
+                u_curr[b_nodes] = pde.evaluate_solution(
+                    new_mesh.nodes[b_nodes, 0], new_mesh.nodes[b_nodes, 1], t_curr
                 )
-            )
+                curr_mesh = new_mesh
+                solver = ConvectionDiffusionFEM2D(curr_mesh, pde)
 
-            displacement_over_h = rms_displacement / h
+            u_curr = solver.step_backward_euler(u_curr, dt=dt, t_next=t_next)
 
-            geom = compute_mesh_metrics(
-                adapted_mesh.nodes,
-                adapted_mesh.cells,
-            )
-
-            min_j = float(np.min(geom["jacobians"]))
-            alpha = float(prediction["alpha_global"])
-
-            print(
-                f"{label:<18}"
-                f"{100.0 * err_fixed:>13.4f}"
-                f"{100.0 * err_adapted:>16.4f}"
-                f"{relative_change:>13.2f}"
-                f"{alpha:>10.4f}"
-                f"{displacement_over_h:>13.4e}"
-                f"{min_j:>13.4e}"
-            )
-
-        print()
+        final_l2, final_h1 = compute_continuous_errors(curr_mesh, u_curr, pde, n_steps * dt)
+        print(f"Configurazione {mode_label:<18} -> Final L2: {final_l2*100:.2f}% | Final H1: {final_h1*100:.2f}%")
 
 
 if __name__ == "__main__":
-    main()
+    run_diagnostic()

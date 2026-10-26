@@ -31,7 +31,7 @@ def compute_continuous_errors(
     mesh: TriangularMesh2D,
     u_h: np.ndarray,
     pde: ManufacturedConvectionDiffusion2D,
-    t: float
+    t: float,
 ) -> Tuple[float, float]:
     """Calcola l'errore continuo relativo L2 e la seminorma H1 con quadratura di Dunavant grado 5."""
     qp_ref, qw_ref = _get_triangle_quadrature_degree_5()
@@ -72,11 +72,11 @@ def compute_continuous_errors(
         diff_gy = duh_dy - uy_ex
 
         factor = (2.0 * w) * areas
-        l2_err_sq += np.sum(factor * (diff_u ** 2))
-        h1_err_sq += np.sum(factor * (diff_gx ** 2 + diff_gy ** 2))
+        l2_err_sq += np.sum(factor * (diff_u**2))
+        h1_err_sq += np.sum(factor * (diff_gx**2 + diff_gy**2))
 
-        l2_ref_sq += np.sum(factor * (u_ex ** 2))
-        h1_ref_sq += np.sum(factor * (ux_ex ** 2 + uy_ex ** 2))
+        l2_ref_sq += np.sum(factor * (u_ex**2))
+        h1_ref_sq += np.sum(factor * (ux_ex**2 + uy_ex**2))
 
     rel_l2 = float(np.sqrt(max(l2_err_sq, 0.0)) / np.sqrt(max(l2_ref_sq, 1e-14)))
     rel_h1 = float(np.sqrt(max(h1_err_sq, 0.0)) / np.sqrt(max(h1_ref_sq, 1e-14)))
@@ -90,7 +90,7 @@ class DynamicPDESimulator:
         pde: ManufacturedConvectionDiffusion2D,
         config: Dict[str, Any],
         inference_engine: Optional[MeshMoverInferenceEngine] = None,
-        epsilon: float = 1e-4
+        epsilon: float = 1e-4,
     ):
         self.initial_mesh = initial_mesh
         self.pde = pde
@@ -107,7 +107,6 @@ class DynamicPDESimulator:
         adapt_interval: int = 10,
         adapt_at_window_start: bool = False,
     ) -> Dict[str, Any]:
-
         assert mode in ["fixed", "gnn_fem", "gnn_exact", "oracle"], f"Modalità non valida: {mode}"
         assert remap_method in ["p1", "l2"], f"Remap method non valido: {remap_method}"
 
@@ -152,12 +151,9 @@ class DynamicPDESimulator:
             "timing_safety_ms": [],
             "timing_remap_ms": [],
             "timing_total_step_ms": [],
-            "mesh_snapshots": [
-                (0.0, current_mesh.nodes.copy(), u_current.copy())
-            ],
+            "mesh_snapshots": [(0.0, current_mesh.nodes.copy(), u_current.copy())],
         }
 
-        # Diagnostica iniziale (fuori dal cronometro algoritmico)
         l2_init, h1_init = compute_continuous_errors(current_mesh, u_current, self.pde, 0.0)
         history["rel_l2_error"].append(l2_init)
         history["rel_h1_error"].append(h1_init)
@@ -235,7 +231,6 @@ class DynamicPDESimulator:
                 if alpha_step < 1.0 - 1e-12:
                     history["safety_activations"] += 1
 
-                # Remapping dello stato sulla nuova mesh
                 u_before_remap = u_current.copy()
                 t_rem_start = time.perf_counter()
 
@@ -266,7 +261,6 @@ class DynamicPDESimulator:
 
                 time_remap = (time.perf_counter() - t_rem_start) * 1000.0
 
-                # Diagnostica errore remapping grezzo (fuori dal timer)
                 u_exact_new_nodes = self.pde.evaluate_solution(
                     new_mesh.nodes[:, 0],
                     new_mesh.nodes[:, 1],
@@ -284,7 +278,6 @@ class DynamicPDESimulator:
                 fem_solver = ConvectionDiffusionFEM2D(current_mesh, self.pde)
                 time_fem += (time.perf_counter() - t_reass_start) * 1000.0
 
-            # Avanzamento temporale FEM
             t_fem_start = time.perf_counter()
             u_next = fem_solver.step_backward_euler(
                 u_n=u_current,
@@ -299,7 +292,6 @@ class DynamicPDESimulator:
             step_algo_ms = time_fem + time_gnn + time_safety + time_remap
             algo_elapsed_s += step_algo_ms / 1000.0
 
-            # Valutazione diagnostica della soluzione (fuori dal timer algoritmico)
             l2_err, h1_err = compute_continuous_errors(current_mesh, u_current, self.pde, current_time)
             geom_m = compute_mesh_metrics(current_mesh.nodes, current_mesh.cells)
 

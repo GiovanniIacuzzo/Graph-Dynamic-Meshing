@@ -469,38 +469,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-"""
-[2026-09-20 15:02:16] [INFO] [BenchmarkSuite] Avvio test su split 'test_interp' (30 campioni)...
-[2026-09-20 15:02:17] [INFO] [BenchmarkSuite] Avvio test su split 'test_extrap' (30 campioni)...
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Campagna completata su 60 istanze complessive.
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] 
-================ TABELLA: SPLIT TEST_INTERP ================
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Baseline         | Interp Err (x1e-4) | R_oracle (%)   | Min Jacobian   | Mean Quality | Time (ms) 
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] ---------------------------------------------------------------------------------------------------
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B0_fixed         | 0.19 +/- 0.11      | -              | +9.7656e-04   | 0.8660       | 0.00
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B_zero           | 0.19 +/- 0.11      | -              | +9.7656e-04   | 0.8660       | 0.00
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B3_gnn_raw       | 0.18 +/- 0.11      | -              | +8.0437e-04   | 0.8660       | 20.95
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B4_gnn_safety    | 0.18 +/- 0.11      | 11.8%          | +8.0437e-04   | 0.8660       | 22.48
-/Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/evaluate.py:304: RuntimeWarning: Mean of empty slice
-  mean_t = np.nanmean(metrics["timing_ms"]) if len(metrics["timing_ms"]) > 0 else np.nan
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B5_oracle        | 0.08 +/- 0.04      | -              | +3.0731e-04   | 0.8629       | nan
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] 
-================ TABELLA: SPLIT TEST_EXTRAP ================
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Baseline         | Interp Err (x1e-4) | R_oracle (%)   | Min Jacobian   | Mean Quality | Time (ms) 
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] ---------------------------------------------------------------------------------------------------
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B0_fixed         | 0.43 +/- 0.43      | -              | +9.7656e-04   | 0.8660       | 0.00
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B_zero           | 0.43 +/- 0.43      | -              | +9.7656e-04   | 0.8660       | 0.00
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B3_gnn_raw       | 0.50 +/- 0.50      | -              | +8.0348e-04   | 0.8660       | 14.87
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B4_gnn_safety    | 0.50 +/- 0.50      | 10.9%          | +8.0348e-04   | 0.8660       | 16.38
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] B5_oracle        | 0.11 +/- 0.09      | -              | +1.0020e-04   | 0.8638       | nan
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] 
-Tabella LaTeX registrata con successo in: /Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/results/stage_a/benchmark/table_benchmark.tex
-/Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/evaluate.py:366: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
-  ax0.boxplot(data_interp, labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
-/Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/evaluate.py:379: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
-  ax1.boxplot(data_j, labels=["B0 (Fix)", "B3 (Raw)", "B4 (Ours)", "B5 (Opt)"])
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] Grafici di benchmark esportati con successo in: /Users/giovanni02/Desktop/Progetti/Graph-Dynamic-Meshing/results/stage_a/benchmark/benchmark_plots.png
-[2026-09-20 15:02:18] [INFO] [BenchmarkSuite] === Campagna di Valutazione Scientifica Completata con Successo ===
-"""

@@ -190,6 +190,61 @@ class GraphDynamicMeshingDataset(Dataset):
         }
 
 
+
+def build_graph_sample_from_arrays(
+    nodes: np.ndarray,
+    cells: np.ndarray,
+    u: np.ndarray,
+    grad_u: np.ndarray,
+    target_disp: Optional[np.ndarray] = None,
+):
+    """Build one inference graph using exactly the feature contract used in training.
+
+    Node features are ``[x, y, u, grad_u_x, grad_u_y, is_boundary]`` and
+    directed edge attributes are ``[dx, dy, ||dx||]`` in the orientation stored
+    by :class:`TriangularMesh2D`. The returned object is a PyG ``Data`` instance.
+    """
+    try:
+        from torch_geometric.data import Data
+    except ImportError as exc:
+        raise ImportError(
+            "La costruzione del grafo d'inferenza richiede torch-geometric; "
+            "installare le dipendenze definite in environment.yml/pyproject.toml."
+        ) from exc
+
+    nodes_arr = np.ascontiguousarray(nodes, dtype=np.float64)
+    cells_arr = np.ascontiguousarray(cells, dtype=np.int64)
+    u_arr = np.ascontiguousarray(u, dtype=np.float64)
+    grad_arr = np.ascontiguousarray(grad_u, dtype=np.float64)
+    mesh = TriangularMesh2D(nodes_arr, cells_arr)
+    n = mesh.num_nodes
+    if u_arr.shape != (n,):
+        raise ValueError(f"u deve avere shape ({n},), ricevuta {u_arr.shape}.")
+    if grad_arr.shape != (n, 2):
+        raise ValueError(f"grad_u deve avere shape ({n}, 2), ricevuta {grad_arr.shape}.")
+    if not np.all(np.isfinite(u_arr)) or not np.all(np.isfinite(grad_arr)):
+        raise ValueError("u e grad_u devono contenere soltanto valori finiti.")
+
+    boundary_feature = mesh.boundary_mask.astype(np.float64).reshape(-1, 1)
+    node_features = np.hstack((nodes_arr, u_arr[:, None], grad_arr, boundary_feature))
+    edges = mesh.edges
+    diff = nodes_arr[edges[:, 1]] - nodes_arr[edges[:, 0]]
+    edge_features = np.hstack((diff, np.linalg.norm(diff, axis=1, keepdims=True)))
+
+    data = Data(
+        x=torch.as_tensor(node_features, dtype=torch.float32),
+        edge_index=torch.as_tensor(edges.T.copy(), dtype=torch.long),
+        edge_attr=torch.as_tensor(edge_features, dtype=torch.float32),
+        pos=torch.as_tensor(nodes_arr, dtype=torch.float32),
+        cells=torch.as_tensor(cells_arr, dtype=torch.long),
+    )
+    if target_disp is not None:
+        target = np.ascontiguousarray(target_disp, dtype=np.float64)
+        if target.shape != (n, 2) or not np.all(np.isfinite(target)):
+            raise ValueError(f"target_disp deve avere shape ({n}, 2) e valori finiti.")
+        data.target_displacement = torch.as_tensor(target, dtype=torch.float32)
+    return data
+
 def collate_graph_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Collate function per raggruppare grafi di dimensione arbitraria (batching standard GNN).

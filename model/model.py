@@ -192,3 +192,34 @@ class MeshMoverGNN(nn.Module):
         displacement = self.node_decoder(v)
         
         return displacement
+
+
+def build_model_from_config(config: dict) -> MeshMoverGNN:
+    """Create ``MeshMoverGNN`` from the repository's experiment configuration.
+
+    The same keys and defaults used by ``train.py`` are kept here so training
+    and inference instantiate an identical module architecture.
+    """
+    if not isinstance(config, dict):
+        raise TypeError("config deve essere un dizionario.")
+    model_cfg = config.get("model", config)
+    if not isinstance(model_cfg, dict):
+        raise TypeError("config['model'] deve essere un dizionario.")
+
+    required = ("node_in_dim", "edge_in_dim", "out_dim", "latent_dim",
+                "num_message_passing_steps", "mlp_num_layers")
+    defaults = {"out_dim": 2, "latent_dim": 128,
+                "num_message_passing_steps": 6, "mlp_num_layers": 2}
+    values = {}
+    for key in required:
+        if key in model_cfg:
+            values[key] = int(model_cfg[key])
+        elif key in defaults:
+            values[key] = defaults[key]
+        else:
+            raise KeyError(f"Configurazione del modello priva del parametro obbligatorio {key!r}.")
+        if values[key] <= 0:
+            raise ValueError(f"Il parametro model.{key} deve essere positivo, ricevuto {values[key]}.")
+    if values["out_dim"] != 2:
+        raise ValueError("MeshMoverGNN di GDM richiede out_dim=2 per gli spostamenti 2D.")
+    return MeshMoverGNN(**values)

@@ -87,7 +87,7 @@ def test_dynamic_one_step_coupling():
     engine = MeshMoverInferenceEngine(checkpoint_path=checkpoint_path, config=cfg, device="cpu")
     pred_res = engine.predict(mesh_0, u_n_nodes, grad_u_fem)
 
-    raw_disp = pred_res["predicted_displacement"]
+    raw_disp = pred_res["raw_displacement"]
     mesh_new = pred_res["adapted_mesh"]
     alpha_safety = pred_res.get("safety_alpha", pred_res.get("alpha", 1.0))
 

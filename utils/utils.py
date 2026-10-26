@@ -219,3 +219,102 @@ def setup_logger(
         logger.addHandler(file_handler)
 
     return logger
+
+# =============================================================================
+# 6. DEVICE AND CHECKPOINT HELPERS
+# =============================================================================
+
+def get_device(device: Union[str, "Any"] = "auto"):
+    """Resolve a PyTorch device string with explicit availability checks.
+
+    ``auto`` prefers CUDA, then Apple MPS, then CPU. An explicitly requested
+    accelerator that is unavailable raises an actionable error rather than
+    silently moving the experiment to a different device.
+    """
+    import torch
+
+    if isinstance(device, torch.device):
+        name = device.type
+        requested = device
+    else:
+        name = str(device).strip().lower()
+        requested = None
+
+    if name in {"", "auto", "default"}:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is not None and mps_backend.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+
+    if requested is not None:
+        if name == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("È stato richiesto CUDA, ma CUDA non è disponibile in questa installazione di PyTorch.")
+        if name == "mps":
+            mps_backend = getattr(torch.backends, "mps", None)
+            if mps_backend is None or not mps_backend.is_available():
+                raise RuntimeError("È stato richiesto MPS, ma il backend Apple MPS non è disponibile.")
+        return requested
+
+    if name.startswith("cuda"):
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"È stato richiesto il dispositivo {name!r}, ma CUDA non è disponibile.")
+        try:
+            return torch.device(name)
+        except Exception as exc:
+            raise ValueError(f"Dispositivo PyTorch non valido: {device!r}.") from exc
+    if name == "mps":
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is None or not mps_backend.is_available():
+            raise RuntimeError("È stato richiesto MPS, ma il backend Apple MPS non è disponibile.")
+        return torch.device("mps")
+    if name == "cpu":
+        return torch.device("cpu")
+    try:
+        return torch.device(name)
+    except Exception as exc:
+        raise ValueError(f"Dispositivo PyTorch non riconosciuto: {device!r}.") from exc
+
+
+def load_checkpoint(
+    checkpoint_path: Union[str, Path],
+    model: Any,
+    optimizer: Optional[Any] = None,
+    device: Optional[Any] = None,
+    strict: bool = True,
+) -> Dict[str, Any]:
+    """Load a training checkpoint into a model and optionally an optimizer.
+
+    Supports the repository's structured checkpoints (``model_state_dict``)
+    and raw state dictionaries. Returns the complete checkpoint payload.
+    """
+    import torch
+
+    path = Path(checkpoint_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Checkpoint non trovato: {path.resolve()}")
+    map_location = device if device is not None else "cpu"
+    try:
+        payload = torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:  # Compatibilità con versioni di PyTorch senza weights_only.
+        payload = torch.load(path, map_location=map_location)
+
+    if not isinstance(payload, dict):
+        raise ValueError("Il checkpoint deve contenere un dizionario o uno state_dict.")
+
+    state_dict = payload.get("model_state_dict")
+    if state_dict is None:
+        state_dict = payload.get("state_dict")
+    if state_dict is None and payload and all(isinstance(k, str) for k in payload):
+        # Un raw state_dict è composto da nomi di parametri e tensori, non da
+        # metadati (epoch/config/optimizer_state_dict).
+        if not any(k in payload for k in ("epoch", "config", "optimizer_state_dict", "best_val_loss")):
+            state_dict = payload
+    if not isinstance(state_dict, dict):
+        raise KeyError("Checkpoint privo di 'model_state_dict', 'state_dict' o raw state_dict riconoscibile.")
+
+    model.load_state_dict(state_dict, strict=bool(strict))
+    if optimizer is not None and payload.get("optimizer_state_dict") is not None:
+        optimizer.load_state_dict(payload["optimizer_state_dict"])
+    return payload
