@@ -16,8 +16,10 @@ from typing import Dict, Any, Tuple, Optional, List
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
-from geometry.geometry import compute_mesh_metrics
-from geometry.safety import apply_safety_filter
+from oracle.native_geometry import (
+    compute_native_mesh_metrics_arrays as compute_mesh_metrics,
+    apply_native_safety_filter_tuple as apply_safety_filter,
+)
 from oracle.field import GaussianBumpField
 from oracle.objective import OracleObjective
 

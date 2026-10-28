@@ -41,9 +41,9 @@ public:
     const std::vector<std::int64_t>& boundary_nodes() const noexcept { return boundary_nodes_; }
     const std::vector<bool>& is_boundary_node() const noexcept { return is_boundary_; }
 
-    // Archi non orientati [E, 2] con u < v (come TriangularMesh2D.edges)
+    // Archi non orientati [E, 2], ordinati con u < v.
     const std::vector<EdgePair>& undirected_edges() const noexcept { return edges_; }
-    // Archi orientati bidirezionali [2E, 2] nel medesimo ordine di TriangularMesh2D.directed_edges
+    // Archi orientati bidirezionali [2E, 2] in ordine deterministico per il grafo GNN.
     const std::vector<EdgePair>& directed_edges() const noexcept { return directed_edges_; }
 
     void update_coordinates(const std::vector<Coord2D>& new_nodes, bool enforce_fixed_boundary = false);

@@ -241,7 +241,7 @@ void MeshState::build_graph_edges() {
     }
 
     // Costruzione di directed_edges [2E, 2] con ordinamento lessicografico,
-    // come TriangularMesh2D, per garantire riproducibilita' del grafo.
+    // con ordine deterministico, per garantire riproducibilita' del grafo.
     directed_edges_.clear();
     directed_edges_.reserve(2 * edges_.size());
     for (const auto& e : edges_) {

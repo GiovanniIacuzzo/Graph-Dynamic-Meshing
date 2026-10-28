@@ -121,7 +121,8 @@ class MeshMoverGNN(nn.Module):
         out_dim: int = 2,
         latent_dim: int = 128,
         num_message_passing_steps: int = 6,
-        mlp_num_layers: int = 2
+        mlp_num_layers: int = 2,
+        max_displacement: Optional[float] = None,
     ):
         """
         Parametri:
@@ -162,6 +163,12 @@ class MeshMoverGNN(nn.Module):
             num_layers=mlp_num_layers,
             activate_final=False
         )
+        if max_displacement is not None and float(max_displacement) <= 0.0:
+            raise ValueError("max_displacement deve essere positivo quando specificato.")
+        # Optional smooth output bound. Disabled for legacy checkpoints/configs;
+        # enabled in Stage-D.1 to prevent random early-epoch predictions from
+        # proposing displacements larger than the local mesh scale.
+        self.max_displacement = None if max_displacement is None else float(max_displacement)
 
     def forward(
         self,
@@ -190,6 +197,8 @@ class MeshMoverGNN(nn.Module):
 
         # 3. Decoding: estrazione del campo di spostamento nodale
         displacement = self.node_decoder(v)
+        if self.max_displacement is not None:
+            displacement = self.max_displacement * torch.tanh(displacement)
         
         return displacement
 
@@ -197,7 +206,7 @@ class MeshMoverGNN(nn.Module):
 def build_model_from_config(config: dict) -> MeshMoverGNN:
     """Create ``MeshMoverGNN`` from the repository's experiment configuration.
 
-    The same keys and defaults used by ``train.py`` are kept here so training
+    The same keys and defaults used by ``training/train.py`` are kept here so training
     and inference instantiate an identical module architecture.
     """
     if not isinstance(config, dict):
@@ -222,4 +231,10 @@ def build_model_from_config(config: dict) -> MeshMoverGNN:
             raise ValueError(f"Il parametro model.{key} deve essere positivo, ricevuto {values[key]}.")
     if values["out_dim"] != 2:
         raise ValueError("MeshMoverGNN di GDM richiede out_dim=2 per gli spostamenti 2D.")
+    max_displacement = model_cfg.get("max_displacement", None)
+    if max_displacement is not None:
+        max_displacement = float(max_displacement)
+        if max_displacement <= 0.0:
+            raise ValueError("model.max_displacement deve essere positivo.")
+        values["max_displacement"] = max_displacement
     return MeshMoverGNN(**values)

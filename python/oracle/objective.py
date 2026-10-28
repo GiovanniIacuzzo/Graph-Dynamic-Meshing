@@ -17,7 +17,7 @@ Vincoli verificati:
 
 from typing import Dict, Any, Tuple, Optional
 import numpy as np
-from geometry.geometry import compute_mesh_metrics
+from oracle.native_geometry import compute_native_mesh_metrics_arrays as compute_mesh_metrics
 from oracle.field import GaussianBumpField
 
 
@@ -94,7 +94,7 @@ class OracleObjective:
         total_err_sq = 0.0
 
         # Ciclo sui 3 punti di quadratura di Gauss
-        for q_idx in range(3):
+        for q_idx in range(self.quad_bary.shape[0]):
             bary = self.quad_bary[q_idx]  # [3]
             weight = self.quad_weights[q_idx]
 
@@ -199,7 +199,7 @@ class OracleObjective:
             (self.num_cells, 3, 2), dtype=np.float64
         )
 
-        for q_idx in range(3):
+        for q_idx in range(self.quad_bary.shape[0]):
             bary = self.quad_bary[q_idx]
             weight = self.quad_weights[q_idx]
 

@@ -26,18 +26,14 @@ dev = [
 
 [tool.setuptools]
 include-package-data = true
+py-modules = ["inference"]
 
 [tool.setuptools.package-dir]
 "" = "python"
-dataset = "dataset"
-model = "model"
-utils = "utils"
 
 [tool.setuptools.packages.find]
-where = ["python", "."]
+where = ["python"]
 include = [
-    "geometry*",
-    "numerics*",
     "oracle*",
     "evaluation*",
     "gdm*",

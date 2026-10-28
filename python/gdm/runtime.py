@@ -7,6 +7,14 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from . import _gdm_core
+
+
+def _trapezoid_area(values: List[float], times: List[float]) -> float:
+    """Integrate with the NumPy 2.x API when available, retaining NumPy 1.x support."""
+    integrator = getattr(np, "trapezoid", None)
+    if integrator is None:  # NumPy < 2.0
+        integrator = np.trapz
+    return float(integrator(values, times))
 from .native_api import (
     NativeMeshAdapter,
     apply_native_safety_filter,
@@ -331,8 +339,8 @@ class NativeDynamicRuntime:
                 "rel_h1_error": h1_series,
                 "final_l2": float(l2_series[-1]),
                 "final_h1": float(h1_series[-1]),
-                "time_int_l2": float(np.trapz(l2_series, time_arr) / self.T),
-                "time_int_h1": float(np.trapz(h1_series, time_arr) / self.T),
+                "time_int_l2": float(_trapezoid_area(l2_series, time_arr) / self.T),
+                "time_int_h1": float(_trapezoid_area(h1_series, time_arr) / self.T),
                 "min_jacobian": float(np.min(min_j_series)),
                 "min_j_series": min_j_series,
                 "alpha_series": alpha_series,

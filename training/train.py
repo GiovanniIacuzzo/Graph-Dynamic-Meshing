@@ -14,6 +14,7 @@ Pipeline implementata:
     6. Archiviazione della configurazione esatta per la riproducibilità scientifica
 """
 
+import argparse
 import sys
 import json
 import time
@@ -24,8 +25,11 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-# Inclusione della radice nel path per esecuzione diretta
-sys.path.append(str(Path(__file__).resolve().parent))
+# Percorsi espliciti per esecuzione diretta senza dipendere da installazione editable.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _path in (PROJECT_ROOT, PROJECT_ROOT / "python"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from model.model import MeshMoverGNN
 from dataset.dataset import GraphDynamicMeshingDataset, collate_graph_batch
@@ -268,8 +272,12 @@ def validate_one_epoch(
 # =============================================================================
 
 def main():
-    config_path = Path("config/config.yaml")
-    assert config_path.exists(), f"File di configurazione non trovato: {config_path.resolve()}"
+    parser = argparse.ArgumentParser(description="Train GDM MeshMoverGNN")
+    parser.add_argument("--config", default="config/config.yaml", help="Percorso del file YAML di configurazione")
+    args = parser.parse_args()
+    config_path = Path(args.config)
+    if not config_path.exists():
+        raise FileNotFoundError(f"File di configurazione non trovato: {config_path.resolve()}")
     config = load_config(config_path)
 
     exp_cfg = config["experiment"]

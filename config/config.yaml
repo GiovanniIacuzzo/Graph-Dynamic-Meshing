@@ -9,7 +9,7 @@ experiment:
   seed: 42
   device: "mps"                 # 'cuda' o 'cpu'
   deterministic: false
-  output_dir: "results/stage_a_oracle_v2"
+  output_dir: "results/stage_a"
   log_level: "INFO"
 
 # -----------------------------------------------------------------------------

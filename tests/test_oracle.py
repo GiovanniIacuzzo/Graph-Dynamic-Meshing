@@ -5,8 +5,6 @@ Test di convergenza dell'ottimizzatore offline su campi gaussiani simmetrici.
 
 import numpy as np
 import pytest
-from geometry.mesh import TriangularMesh2D
-from geometry.geometry import compute_mesh_metrics
 from oracle.field import GaussianBumpField
 from oracle.objective import OracleObjective
 from oracle.optimizer import OfflineMeshOptimizer
@@ -37,6 +35,7 @@ def test_gaussian_bump_analytical_derivatives():
 
 
 def test_oracle_objective_evaluation_and_normalization():
+    pytest.importorskip("gdm._gdm_core", reason="Oracle geometry is delegated to the native core; compile deal.II first.", exc_type=ImportError)
     """
     Verifica che il funzionale multiobiettivo OracleObjective:
     - abbia valore iniziale J(X_0) = 1.0 + lambda_Q * Q_0 (grazie alla normalizzazione E_0)
@@ -55,20 +54,24 @@ def test_oracle_objective_evaluation_and_normalization():
         [4, 5, 8], [4, 8, 7]
     ], dtype=np.int64)
 
-    mesh = TriangularMesh2D(nodes, cells)
+    boundary_mask = (
+        np.isclose(nodes[:, 0], 0.0) | np.isclose(nodes[:, 0], 1.0)
+        | np.isclose(nodes[:, 1], 0.0) | np.isclose(nodes[:, 1], 1.0)
+    )
+    boundary_nodes = np.flatnonzero(boundary_mask)
     field = GaussianBumpField(mu_x=0.5, mu_y=0.5, sigma=0.1, amplitude=1.0)
 
     obj = OracleObjective(
         reference_field=field,
-        initial_nodes=mesh.nodes,
-        cells=mesh.cells,
-        boundary_nodes=mesh.boundary_nodes,
+        initial_nodes=nodes,
+        cells=cells,
+        boundary_nodes=boundary_nodes,
         lambda_D=0.01,
         lambda_Q=0.001,
         epsilon=1e-4
     )
 
-    eval_0 = obj.evaluate(mesh.nodes)
+    eval_0 = obj.evaluate(nodes)
     assert eval_0["is_valid"]
     # All'inizio D(X_0) = 0 e E_tilde = 1.0
     assert np.isclose(eval_0["movement_penalty"], 0.0, atol=1e-14)
@@ -76,6 +79,7 @@ def test_oracle_objective_evaluation_and_normalization():
 
 
 def test_offline_optimizer_reduces_interpolation_error():
+    pytest.importorskip("gdm._gdm_core", reason="Oracle geometry is delegated to the native core; compile deal.II first.", exc_type=ImportError)
     """
     Verifica che l'ottimizzatore offline converga, riduca l'errore funzionale integrato
     e produca uno spostamento supervisionato Delta X* ammissibile che rispetta il bordo.
@@ -97,14 +101,18 @@ def test_offline_optimizer_reduces_interpolation_error():
             cells.append([n0, n3, n2])
     cells = np.array(cells, dtype=np.int64)
 
-    mesh = TriangularMesh2D(nodes, cells)
+    boundary_mask = (
+        np.isclose(nodes[:, 0], 0.0) | np.isclose(nodes[:, 0], 1.0)
+        | np.isclose(nodes[:, 1], 0.0) | np.isclose(nodes[:, 1], 1.0)
+    )
+    boundary_nodes = np.flatnonzero(boundary_mask)
     field = GaussianBumpField(mu_x=0.5, mu_y=0.5, sigma=0.08, amplitude=1.0)
 
     optimizer = OfflineMeshOptimizer(
         reference_field=field,
-        initial_nodes=mesh.nodes,
-        cells=mesh.cells,
-        boundary_nodes=mesh.boundary_nodes,
+        initial_nodes=nodes,
+        cells=cells,
+        boundary_nodes=boundary_nodes,
         lambda_D=0.01,
         lambda_Q=0.001,
         epsilon=1e-4,
@@ -120,7 +128,7 @@ def test_offline_optimizer_reduces_interpolation_error():
 
     # 2. I nodi di bordo devono avere spostamento rigorosamente nullo
     target_disp = res["target_displacement"]
-    np.testing.assert_allclose(target_disp[mesh.boundary_nodes], 0.0, atol=1e-12)
+    np.testing.assert_allclose(target_disp[boundary_nodes], 0.0, atol=1e-12)
 
     # 3. Almeno un nodo interno deve essersi concentrato verso il centro della gaussiana
     inner_disp = target_disp[~optimizer.is_boundary]

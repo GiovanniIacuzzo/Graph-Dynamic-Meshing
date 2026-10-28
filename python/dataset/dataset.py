@@ -20,7 +20,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from geometry.mesh import TriangularMesh2D
 
 
 class MeshSample:
@@ -69,7 +68,8 @@ class GraphDynamicMeshingDataset(Dataset):
         self,
         data_dir: str | Path,
         split: str = "train",
-        dtype: torch.dtype = torch.float32
+        dtype: torch.dtype = torch.float32,
+        normalize_field_scale: bool = False,
     ):
         """
         data_dir: cartella contenente i campioni serializzati (.pkl o .pt)
@@ -80,10 +80,15 @@ class GraphDynamicMeshingDataset(Dataset):
         self.data_dir = Path(data_dir)
         self.split = split
         self.dtype = dtype
+        self.normalize_field_scale = bool(normalize_field_scale)
 
         assert self.data_dir.exists(), f"Directory non trovata: {self.data_dir}"
 
         self.sample_files: List[Path] = self._resolve_samples_for_split()
+        # C++ topology is immutable for a stored sample. Cache only array outputs,
+        # not MeshState objects, so dataset iteration does not rebuild deal.II's
+        # triangulation on every epoch.
+        self._native_topology_cache: Dict[str, Tuple[np.ndarray, np.ndarray, int]] = {}
         if len(self.sample_files) == 0:
             raise RuntimeError(f"Nessun campione trovato per lo split '{split}' in {self.data_dir}")
 
@@ -148,23 +153,35 @@ class GraphDynamicMeshingDataset(Dataset):
         sample_path = self.sample_files[idx]
         sample = self._load_sample(sample_path)
 
-        # 1. Ricostruzione topologia e grafo
-        mesh = TriangularMesh2D(sample.nodes, sample.cells)
-        edges = mesh.edges  # [E, 2] bidirezionale
-        bnd_nodes = mesh.boundary_nodes
+        # 1. Ricostruzione topologica tramite il core C++/deal.II. Anche per il
+        # preprocessing del grafo non viene mantenuta una seconda classe Mesh Python.
+        topology = self._native_topology_cache.get(sample.sample_id)
+        if topology is None:
+            from gdm.native_api import NativeMeshAdapter
+            mesh = NativeMeshAdapter.from_arrays(sample.nodes, sample.cells)
+            topology = (mesh.edges.copy(), mesh.boundary_nodes.copy(), mesh.num_nodes)
+            self._native_topology_cache[sample.sample_id] = topology
+        edges, bnd_nodes, num_nodes = topology
 
-        # Maschera booleana / numerica di bordo per i nodi
-        is_boundary = np.zeros((mesh.num_nodes, 1), dtype=np.float64)
+        is_boundary = np.zeros((num_nodes, 1), dtype=np.float64)
         is_boundary[bnd_nodes] = 1.0
 
-        # 2. Composizione Node Features: [x, y, u, grad_u_x, grad_u_y, is_boundary]
-        # Dimensione: [N, 6]
-        u_expanded = sample.u[:, np.newaxis]
+        # 2. Composizione Node Features: [x, y, u, grad_u_x, grad_u_y, is_boundary].
+        # Per Stage D self-supervised, si può normalizzare u e grad_u con la
+        # stessa scala positiva per eliminare l'ampiezza moltiplicativa e^{-beta t},
+        # che si cancella dal funzionale d'errore normalizzato.
+        u_feat = sample.u
+        grad_feat = sample.grad_u
+        if self.normalize_field_scale:
+            field_scale = max(float(np.max(np.abs(sample.u))), 1e-12)
+            u_feat = sample.u / field_scale
+            grad_feat = sample.grad_u / field_scale
+        u_expanded = u_feat[:, np.newaxis]
         node_feats = np.hstack([
-            sample.nodes,       # [N, 2]
-            u_expanded,         # [N, 1]
-            sample.grad_u,      # [N, 2]
-            is_boundary         # [N, 1]
+            sample.nodes,
+            u_expanded,
+            grad_feat,
+            is_boundary
         ])
 
         # 3. Composizione Edge Features: [x_j - x_i, y_j - y_i, ||x_j - x_i||]
@@ -197,12 +214,16 @@ def build_graph_sample_from_arrays(
     u: np.ndarray,
     grad_u: np.ndarray,
     target_disp: Optional[np.ndarray] = None,
+    normalize_field_scale: bool = False,
+    native_mesh: Optional[Any] = None,
 ):
     """Build one inference graph using exactly the feature contract used in training.
 
     Node features are ``[x, y, u, grad_u_x, grad_u_y, is_boundary]`` and
-    directed edge attributes are ``[dx, dy, ||dx||]`` in the orientation stored
-    by :class:`TriangularMesh2D`. The returned object is a PyG ``Data`` instance.
+    directed edge attributes are ``[dx, dy, ||dx||]``. During native inference,
+    the already-existing C++ mesh is passed to avoid reconstructing FE state.
+    Mesh connectivity and boundary nodes are always obtained from the native
+    C++ core. Python/Torch only assembles GNN features and the ``Data`` object.
     """
     try:
         from torch_geometric.data import Data
@@ -216,8 +237,18 @@ def build_graph_sample_from_arrays(
     cells_arr = np.ascontiguousarray(cells, dtype=np.int64)
     u_arr = np.ascontiguousarray(u, dtype=np.float64)
     grad_arr = np.ascontiguousarray(grad_u, dtype=np.float64)
-    mesh = TriangularMesh2D(nodes_arr, cells_arr)
-    n = mesh.num_nodes
+    if native_mesh is None:
+        from gdm.native_api import NativeMeshAdapter
+        mesh = NativeMeshAdapter.from_arrays(nodes_arr, cells_arr)
+        mesh_boundary_mask = mesh.boundary_mask
+        edges = mesh.edges
+        n = mesh.num_nodes
+    else:
+        if not np.array_equal(native_mesh.cells, cells_arr) or not np.array_equal(native_mesh.nodes, nodes_arr):
+            raise ValueError("native_mesh non corrisponde agli array nodes/cells forniti.")
+        mesh_boundary_mask = native_mesh.boundary_mask
+        edges = native_mesh.edges
+        n = native_mesh.num_nodes
     if u_arr.shape != (n,):
         raise ValueError(f"u deve avere shape ({n},), ricevuta {u_arr.shape}.")
     if grad_arr.shape != (n, 2):
@@ -225,9 +256,15 @@ def build_graph_sample_from_arrays(
     if not np.all(np.isfinite(u_arr)) or not np.all(np.isfinite(grad_arr)):
         raise ValueError("u e grad_u devono contenere soltanto valori finiti.")
 
-    boundary_feature = mesh.boundary_mask.astype(np.float64).reshape(-1, 1)
-    node_features = np.hstack((nodes_arr, u_arr[:, None], grad_arr, boundary_feature))
-    edges = mesh.edges
+    boundary_feature = np.asarray(mesh_boundary_mask, dtype=np.float64).reshape(-1, 1)
+    if normalize_field_scale:
+        field_scale = max(float(np.max(np.abs(u_arr))), 1e-12)
+        u_feat = u_arr / field_scale
+        grad_feat = grad_arr / field_scale
+    else:
+        u_feat = u_arr
+        grad_feat = grad_arr
+    node_features = np.hstack((nodes_arr, u_feat[:, None], grad_feat, boundary_feature))
     diff = nodes_arr[edges[:, 1]] - nodes_arr[edges[:, 0]]
     edge_features = np.hstack((diff, np.linalg.norm(diff, axis=1, keepdims=True)))
 

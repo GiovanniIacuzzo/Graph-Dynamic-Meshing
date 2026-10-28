@@ -24,10 +24,12 @@ from typing import Dict, Any, List, Tuple
 import numpy as np
 
 # Inclusione root nel path di sistema per esecuzione diretta
-sys.path.append(str(Path(__file__).resolve().parent))
+PROJECT_ROOT = Path(__file__).resolve().parent
+for _path in (PROJECT_ROOT, PROJECT_ROOT / "python"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from geometry.mesh import TriangularMesh2D
-from geometry.geometry import compute_mesh_metrics
+from gdm.native_api import NativeMeshAdapter, compute_native_mesh_metrics_arrays
 from oracle.field import GaussianBumpField
 from oracle.optimizer import OfflineMeshOptimizer
 from utils.utils import load_config, ensure_dir, save_pickle, set_seed, setup_logger, Timer
@@ -37,32 +39,14 @@ def create_initial_mesh_2d(
     domain: Dict[str, float],
     nx: int = 32,
     ny: int = 32
-) -> TriangularMesh2D:
+) -> NativeMeshAdapter:
     """
     Costruisce una triangolazione 2D conforme regolare sul dominio rettangolare.
     Suddivide ciascun rettangolo della griglia strutturata in due triangoli.
     """
-    x = np.linspace(domain["x_min"], domain["x_max"], nx + 1, dtype=np.float64)
-    y = np.linspace(domain["y_min"], domain["y_max"], ny + 1, dtype=np.float64)
-    xx, yy = np.meshgrid(x, y, indexing="xy")
-    
-    nodes = np.column_stack([xx.flatten(), yy.flatten()])
-    
-    cells = []
-    for j in range(ny):
-        for i in range(nx):
-            # Indici dei 4 vertici della cella rettangolare
-            n0 = j * (nx + 1) + i
-            n1 = n0 + 1
-            n2 = (j + 1) * (nx + 1) + i
-            n3 = n2 + 1
-            
-            # Due triangoli orientati in senso antiorario
-            cells.append([n0, n1, n3])
-            cells.append([n0, n3, n2])
-            
-    cells = np.array(cells, dtype=np.int64)
-    return TriangularMesh2D(nodes, cells)
+    # La triangolazione è costruita dal MeshState nativo C++/deal.II.
+    # Python resta responsabile del campionamento e della serializzazione del dataset.
+    return NativeMeshAdapter.from_domain(domain, nx=nx, ny=ny)
 
 
 def sample_parameters(config: Dict[str, Any], seed: int = 42) -> Dict[str, List[Dict[str, float]]]:
@@ -193,17 +177,37 @@ def main():
 
                 opt_result = optimizer.optimize()
 
-                optimal_nodes = opt_result["optimal_nodes"]
-                target_displacement = opt_result["target_displacement"]
-                final_metrics = opt_result["final_metrics"]
+                optimal_nodes = np.ascontiguousarray(opt_result["optimal_nodes"], dtype=np.float64)
+                target_displacement = optimal_nodes - base_mesh.nodes
 
-                # Verifica formale di ammissibilità geometrica
+                # La validazione della proposta è eseguita da C++ su array, senza
+                # costruire una triangolazione FEM prima di aver controllato l'orientamento.
+                final_metrics_native = compute_native_mesh_metrics_arrays(
+                    nodes=optimal_nodes,
+                    cells=base_mesh.cells,
+                    tol_degenerate=float(
+                        geom_cfg.get("tol_degenerate", 1.0e-14)
+                    ),
+                )
+                final_metrics = dict(opt_result.get("final_metrics", {}))
+                final_metrics.update({
+                    "min_jacobian": float(final_metrics_native["min_jacobian"]),
+                    "num_inverted_cells": int(final_metrics_native["num_inverted"]),
+                    "num_degenerate_cells": int(final_metrics_native["num_degenerate"]),
+                    "mean_escobar_quality": float(final_metrics_native["mean_escobar_quality"]),
+                    "validation_backend": "C++/deal.II",
+                })
+
+                # Verifica formale di ammissibilità tramite il backend nativo.
                 assert final_metrics["min_jacobian"] >= geom_cfg["epsilon"], (
                     f"Errore critico su {sample_id}: Jacobiano minimo "
                     f"{final_metrics['min_jacobian']:.3e} < epsilon"
                 )
                 assert final_metrics["num_inverted_cells"] == 0, (
                     f"Errore critico su {sample_id}: trovate celle invertite!"
+                )
+                assert final_metrics["num_degenerate_cells"] == 0, (
+                    f"Errore critico su {sample_id}: trovate celle degeneri!"
                 )
 
                 # Composizione dizionario sample secondo il contratto formale
@@ -247,6 +251,17 @@ def main():
         json.dump(manifest, f, indent=2)
 
     logger.info(f"Manifest registrato con successo in: {manifest_path.resolve()}")
+    provenance = {
+        "mesh_backend": "C++/deal.II via gdm._gdm_core.MeshState",
+        "geometry_validation_backend": "C++/deal.II via compute_mesh_metrics",
+        "oracle_optimizer_backend": "Python/SciPy (not yet ported to C++)",
+        "field_evaluation_backend": "Python analytic Gaussian field",
+        "seed": int(config["experiment"]["seed"]),
+        "sample_count": int(total_samples),
+    }
+    provenance_path = manifest_path.with_name(manifest_path.stem + "_provenance.json")
+    provenance_path.write_text(json.dumps(provenance, indent=2), encoding="utf-8")
+    logger.info(f"Provenienza tecnica salvata in: {provenance_path.resolve()}")
     logger.info(
         f"=== Generazione Dataset Completata con successo in {total_timer.elapsed_seconds:.2f} s ==="
     )

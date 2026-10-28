@@ -16,10 +16,11 @@ import numpy as np
 import torch
 
 from utils.utils import load_config, get_device, load_checkpoint
-from geometry.mesh import TriangularMesh2D
-from geometry.safety import apply_safety_filter
 from dataset.dataset import build_graph_sample_from_arrays
 from model.model import build_model_from_config
+from gdm.native_api import (
+    NativeMeshAdapter, apply_native_safety_filter, compute_native_mesh_metrics,
+)
 
 
 class MeshMoverInferenceEngine:
@@ -54,6 +55,9 @@ class MeshMoverInferenceEngine:
         except TypeError:  # Compatibilità con versioni di PyTorch meno recenti.
             ckpt_payload = torch.load(self.checkpoint_path, map_location=self.device)
         self.config = config if config is not None else ckpt_payload.get("config", {})
+        self.normalize_field_scale = bool(
+            self.config.get("features", {}).get("normalize_field_scale", False)
+        )
         if not self.config:
             raise ValueError("Configuration dictionary is required if not embedded in checkpoint.")
 
@@ -71,7 +75,7 @@ class MeshMoverInferenceEngine:
 
     def prepare_graph(
         self,
-        mesh: TriangularMesh2D,
+        mesh: NativeMeshAdapter,
         u: np.ndarray,
         grad_u: np.ndarray,
     ):
@@ -82,13 +86,15 @@ class MeshMoverInferenceEngine:
             u=u,
             grad_u=grad_u,
             target_disp=None,
+            normalize_field_scale=self.normalize_field_scale,
+            native_mesh=mesh,
         )
         return graph_data.to(self.device)
 
     @torch.no_grad()
     def predict_raw(
         self,
-        mesh: TriangularMesh2D,
+        mesh: NativeMeshAdapter,
         u: np.ndarray,
         grad_u: np.ndarray,
     ) -> Dict[str, Any]:
@@ -139,62 +145,47 @@ class MeshMoverInferenceEngine:
     @torch.no_grad()
     def predict(
         self,
-        mesh: TriangularMesh2D,
+        mesh: NativeMeshAdapter,
         u: np.ndarray,
         grad_u: np.ndarray,
     ) -> Dict[str, Any]:
+        """Run GNN inference followed by the native C++ deterministic filter.
+
+        The PDE state, mesh, geometric diagnostics and safety decision are all
+        handled through ``gdm._gdm_core``. Python/PyTorch is used only to build
+        the graph features and evaluate the neural network.
         """
-        Esegue la pipeline di inferenza neurale (`predict_raw`) seguita dal
-        Safety Filter Python (`apply_safety_filter`).
-
-        Args:
-            mesh: Istanza TriangularMesh2D corrente.
-            u: Campo scalare ai nodi [N].
-            grad_u: Gradiente del campo ai nodi [N, 2].
-
-        Returns:
-            Dizionario contenente:
-              - 'adapted_mesh': Nuova TriangularMesh2D con coordinate aggiornate X + \\Delta X_{safe}
-              - 'displacement': Spostamento filtrato \\Delta X_{safe} [N, 2]
-              - 'raw_displacement': Spostamento grezzo \\Delta X_{GNN} [N, 2]
-              - 'alpha': Fattore globale di rilassamento \\alpha_{global} \\in [0, 1]
-              - 'is_safe': True se \\alpha_{global} == 1.0 (nessun intervento del filtro)
-              - 'min_j_before': Minimo Jacobiano prima dello spostamento
-              - 'min_j_after': Minimo Jacobiano dopo lo spostamento filtrato
-              - 'inference_time': Tempo di pura inferenza GNN (secondi)
-              - 'filter_time': Tempo del Safety Filter (secondi)
-              - 'total_time': Tempo totale (inferenza + filtro)
-        """
-        # 1. Inferenza GNN grezza con condizioni al contorno imposte
-        raw_res = self.predict_raw(mesh, u, grad_u)
-        disp_raw = raw_res["raw_displacement"]
-        t_infer = raw_res["inference_time"]
-
-        # 2. Applicazione del Deterministic Safety Filter Python
-        t0_filter = time.perf_counter()
-        alpha, nodes_safe, is_safe, min_j_after = apply_safety_filter(
-            nodes=mesh.nodes,
-            displacement=disp_raw,
-            cells=mesh.cells,
+        native_mesh = mesh if isinstance(mesh, NativeMeshAdapter) else NativeMeshAdapter.from_arrays(
+            mesh.nodes, mesh.cells, getattr(mesh, "boundary_nodes", None)
+        )
+        raw_res = self.predict_raw(native_mesh, u, grad_u)
+        disp_raw = np.asarray(raw_res["raw_displacement"], dtype=np.float64)
+        t_filter = time.perf_counter()
+        filt = apply_native_safety_filter(
+            native_mesh,
+            disp_raw,
             epsilon=self.epsilon,
             safety_margin=self.safety_margin,
             tol_deg=self.tol_deg,
+            lock_boundary_nodes=True,
         )
-        t_filter = time.perf_counter() - t0_filter
+        t_filter = time.perf_counter() - t_filter
 
-        # Calcolo diagnostico del minimo Jacobiano iniziale
-        from geometry.geometry import compute_mesh_metrics
-        min_j_before = float(np.min(compute_mesh_metrics(mesh.nodes, mesh.cells)["jacobians"]))
-
-        disp_safe = nodes_safe - mesh.nodes
-        adapted_mesh = mesh.update_coordinates(nodes_safe)
-
+        safe_nodes = np.asarray(filt["safe_nodes"], dtype=np.float64)
+        safe_disp = safe_nodes - native_mesh.nodes
+        adapted_mesh = native_mesh.update_coordinates(safe_nodes, enforce_fixed_boundary=True)
+        metrics_before = compute_native_mesh_metrics(native_mesh)
+        min_j_before = float(metrics_before["min_jacobian"])
+        min_j_after = float(filt["min_jacobian_after"])
+        alpha = float(filt["alpha_global"])
+        t_infer = float(raw_res["inference_time"])
+        is_safe = bool(alpha >= 1.0 - 1e-12 and filt.get("is_safe", False))
         return {
-            "adapted_mesh": adapted_mesh,
-            "displacement": disp_safe,
+            # Canonical names.
+            "displacement": safe_disp,
             "raw_displacement": disp_raw,
+            "adapted_mesh": adapted_mesh,
             "alpha": alpha,
-            # Alias mantenuto per i consumer di Stage C che usano il nome storico.
             "safety_alpha": alpha,
             "is_safe": is_safe,
             "min_j_before": min_j_before,
@@ -202,8 +193,11 @@ class MeshMoverInferenceEngine:
             "inference_time": t_infer,
             "filter_time": t_filter,
             "total_time": t_infer + t_filter,
-            # Schema timing compatibile con experiments/stage_c_campaign.py.
             "timing": {"gnn_time": t_infer, "safety_time": t_filter},
+            # Legacy aliases used by earlier Stage-A experiment scripts.
+            "predicted_displacement": disp_raw,
+            "new_nodes": safe_nodes,
+            "filter_activated": bool(filt.get("filter_activated", alpha < 1.0 - 1e-12)),
         }
 
 
@@ -219,7 +213,7 @@ def run_single_sample_demo(config_path: str, checkpoint_path: str, sample_npz: s
         grad_u = data["grad_u"]
         oracle_disp = data["oracle_disp"] if "oracle_disp" in data else None
 
-    mesh = TriangularMesh2D(nodes=nodes, cells=cells)
+    mesh = NativeMeshAdapter.from_arrays(nodes=nodes, cells=cells)
     result = engine.predict(mesh, u, grad_u)
 
     print("=" * 65)

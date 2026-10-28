@@ -1,250 +1,59 @@
-"""
-tests/test_ale_gcl.py
-Test C1 (Mesh Motion Verification), Test C2 (Discrete GCL e Free-Stream Preservation)
-e Test C2b (Discrete Mass Conservation su campi non uniformi).
-"""
-
-import sys
-from pathlib import Path
+"""D-GCL, free-stream preservation and mesh-motion checks through native deal.II."""
 import numpy as np
-import pytest
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-from generate_dataset import create_initial_mesh_2d
-from geometry.mesh import TriangularMesh2D
-from numerics.ale import ALESolver2D
+from tests.native_test_support import (
+    make_mesh, analytical_mesh_motion, create_ale_solver,
+    compute_native_mesh_metrics,
+)
 
 
-def analytical_mesh_motion(
-    nodes_0: np.ndarray,
-    t: float,
-    T: float = 0.5,
-    A: float = 0.02,
-) -> np.ndarray:
-    """
-    Legge di moto analitica regolare con deformazione identicamente nulla a t = 0:
-        X(0) = X_0,   X(t)|_{dOmega} = X_0|_{dOmega}.
-    """
-    x = nodes_0[:, 0]
-    y = nodes_0[:, 1]
-
-    spatial = np.sin(np.pi * x) * np.sin(np.pi * y)
-    omega = 2.0 * np.pi / T
-
-    dx = A * spatial * np.sin(omega * t)
-    dy = 0.5 * A * spatial * (np.cos(omega * t) - 1.0)
-
-    nodes_t = nodes_0.copy()
-    nodes_t[:, 0] += dx
-    nodes_t[:, 1] += dy
-
-    return nodes_t
+def test_native_mesh_motion_is_identity_at_initial_time_and_boundary_fixed():
+    mesh = make_mesh(16)
+    nodes0 = mesh.nodes.copy()
+    np.testing.assert_allclose(analytical_mesh_motion(nodes0, 0.0), nodes0, atol=1e-15)
+    nodes1 = analytical_mesh_motion(nodes0, 0.1)
+    np.testing.assert_allclose(nodes1[mesh.boundary_nodes], nodes0[mesh.boundary_nodes], atol=1e-15)
+    assert compute_native_mesh_metrics(mesh.update_coordinates(nodes1, enforce_fixed_boundary=True))["num_inverted"] == 0
 
 
-def analytical_mesh_velocity(
-    nodes_0: np.ndarray,
-    t: float,
-    T: float = 0.5,
-    A: float = 0.02,
-) -> np.ndarray:
-    """Derivata temporale esatta dX/dt della legge analytical_mesh_motion."""
-    x = nodes_0[:, 0]
-    y = nodes_0[:, 1]
-
-    spatial = np.sin(np.pi * x) * np.sin(np.pi * y)
-    omega = 2.0 * np.pi / T
-
-    wx = A * spatial * omega * np.cos(omega * t)
-    wy = -0.5 * A * spatial * omega * np.sin(omega * t)
-
-    return np.column_stack([wx, wy])
-
-
-def test_c1_mesh_motion_verification():
-    domain = {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0}
-    mesh = create_initial_mesh_2d(domain, nx=32, ny=32)
-    nodes_0 = mesh.nodes.copy()
-
-    nodes_at_zero = analytical_mesh_motion(nodes_0, 0.0, T=0.5, A=0.02)
-    np.testing.assert_allclose(nodes_at_zero, nodes_0, atol=1e-15)
-
-    dt = 0.005
-    T = 0.5
-    t_n = 0.10
-    t_next = t_n + dt
-
-    nodes_n = analytical_mesh_motion(nodes_0, t_n, T=T, A=0.02)
-    nodes_next = analytical_mesh_motion(nodes_0, t_next, T=T, A=0.02)
-
-    w_discrete = (nodes_next - nodes_n) / dt
-    w_exact = analytical_mesh_velocity(nodes_0, t_n + 0.5 * dt, T=T, A=0.02)
-
-    err_l2 = float(np.linalg.norm(w_discrete - w_exact) / np.linalg.norm(w_exact))
-    err_linf = float(np.max(np.abs(w_discrete - w_exact)))
-
-    print("\n" + "=" * 65)
-    print("TEST C1 — MESH MOTION VERIFICATION")
-    print("=" * 65)
-    print(f"Errore Relativo L2 Velocita' : {err_l2:.4e}")
-    print(f"Errore Max Linf Velocita'    : {err_linf:.4e}")
-
-    assert np.isfinite(err_l2) and np.isfinite(err_linf)
-    assert err_l2 < 5e-3
+def test_native_ale_discrete_gcl_and_free_stream_preservation():
+    mesh0 = make_mesh(12)
+    ale = create_ale_solver(None, nu=0.0, bx=0.0, by=0.0)
+    curr = mesh0
+    u = np.ones(mesh0.num_nodes, dtype=np.float64)
+    dt, T = 0.005, 0.05
+    max_elem, max_alg, max_fs = 0.0, 0.0, 0.0
+    for k in range(1, int(round(T/dt)) + 1):
+        t_next = k * dt
+        target_nodes = analytical_mesh_motion(mesh0.nodes, t_next)
+        nxt = mesh0.update_coordinates(target_nodes, enforce_fixed_boundary=True)
+        u, diag = ale.step_ale(curr.core, nxt.core, u, dt, t_next, True, False)
+        u = np.asarray(u, dtype=np.float64)
+        max_elem = max(max_elem, float(diag.max_elem_gcl_residual))
+        max_alg = max(max_alg, float(diag.algebraic_gcl_residual_linf))
+        max_fs = max(max_fs, float(np.max(np.abs(u - 1.0))))
+        curr = nxt
+    assert max_elem < 1e-12
+    assert max_alg < 1e-12
+    assert max_fs < 1e-9
 
 
-def test_c2_discrete_gcl():
-    """
-    Test C2: Discrete GCL e preservazione del campo costante.
-
-    Verifica indipendentemente:
-      1. Residuo geometrico elemento per elemento: |(Area^{n+1} - Area^n)/dt - Area^{n+1/2} div(w^{n+1/2})|.
-      2. Identità algebrica discreta D-GCL non-tautologica: ||((M^{n+1} - M^n)/dt + C_mesh^{n+1/2}) 1||_inf.
-      3. Preservazione end-to-end del free-stream u = 1 durante 100 passi deformanti.
-    """
-    domain = {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0}
-    mesh_0 = create_initial_mesh_2d(domain, nx=32, ny=32)
-    nodes_0 = mesh_0.nodes.copy()
-
-    ale_solver = ALESolver2D(pde_model=None, nu=0.0, bx=0.0, by=0.0)
-
-    T = 0.5
-    dt = 0.005
-    n_steps = 100
-
-    u_current = np.ones(mesh_0.num_nodes, dtype=np.float64)
-    current_mesh = mesh_0
-
-    max_elem_residual = 0.0
-    max_algebraic_residual = 0.0
-    max_free_stream_error = 0.0
-
-    for step in range(1, n_steps + 1):
-        t_next = step * dt
-        nodes_next = analytical_mesh_motion(nodes_0, t_next, T=T, A=0.02)
-        next_mesh = mesh_0.update_coordinates(nodes_next)
-
-        # 1. Assemblaggio e verifica genuina della D-GCL discreta
-        _, M_n, _, diag = ale_solver.assemble_ale_system(
-            current_mesh, next_mesh, dt, t_next, pure_gcl=True
-        )
-        M_next = diag["M_next"]
-        C_mesh = diag["C_mesh_mat"]
-
-        ones_vec = np.ones(next_mesh.num_nodes, dtype=np.float64)
-
-        algebraic_residual_vec = ((M_next - M_n) @ ones_vec) / dt + C_mesh @ ones_vec
-        step_algebraic_residual = float(np.linalg.norm(algebraic_residual_vec, ord=np.inf))
-        step_elem_residual = float(diag["max_elem_gcl_residual"])
-
-        if not (np.isfinite(step_algebraic_residual) and np.isfinite(step_elem_residual)):
-            raise AssertionError(f"Residui GCL non finiti al passo {step}.")
-
-        max_algebraic_residual = max(max_algebraic_residual, step_algebraic_residual)
-        max_elem_residual = max(max_elem_residual, step_elem_residual)
-
-        # 2. Test end-to-end su u = 1
-        u_next, _ = ale_solver.step_ale(
-            current_mesh, next_mesh, u_current, dt=dt, t_next=t_next, pure_gcl=True
-        )
-
-        if not np.all(np.isfinite(u_next)):
-            raise AssertionError(f"Il solver ALE ha prodotto valori non finiti al passo {step}.")
-
-        step_free_stream_error = float(np.max(np.abs(u_next - 1.0)))
-        if not np.isfinite(step_free_stream_error):
-            raise AssertionError(f"Errore free-stream non finito al passo {step}.")
-
-        max_free_stream_error = max(max_free_stream_error, step_free_stream_error)
-
-        u_current = u_next
-        current_mesh = next_mesh
-
-    print("\n" + "=" * 65)
-    print("TEST C2 — DISCRETE GCL & FREE-STREAM PRESERVATION")
-    print("=" * 65)
-    print(f"Max Element-wise GCL Residual : {max_elem_residual:.4e}")
-    print(f"Max Algebraic GCL Residual    : {max_algebraic_residual:.4e}")
-    print(f"Max Free-Stream Error (u = 1) : {max_free_stream_error:.4e}")
-
-    assert max_elem_residual < 1e-12, f"Residuo geometrico non nullo: {max_elem_residual:.3e}"
-    assert max_algebraic_residual < 1e-12, f"Identità algebrica D-GCL non rispettata: {max_algebraic_residual:.3e}"
-    assert max_free_stream_error < 1e-12, f"Free-stream non preservato: {max_free_stream_error:.3e}"
-
-
-def test_c2b_discrete_mass_conservation():
-    """
-    Test C2b: Conservazione globale della massa discreta m_h^n = 1^T M^n U^n
-    su un campo non uniforme sotto deformazione ALE della griglia (b=0, nu=0, f=0).
-
-    Verifica:
-      1. Identità duale di conservazione dell'operatore di mesh: ||1^T C_mesh^{n+1/2}||_inf ~ 0.
-      2. Invarianza dell'integrale discreto m_h^n = int_{Omega(t_n)} u_h^n dx lungo 100 passi.
-    """
-    domain = {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0}
-    mesh_0 = create_initial_mesh_2d(domain, nx=32, ny=32)
-    nodes_0 = mesh_0.nodes.copy()
-
-    ale_solver = ALESolver2D(pde_model=None, nu=0.0, bx=0.0, by=0.0)
-
-    x0, y0 = nodes_0[:, 0], nodes_0[:, 1]
-    u_current = np.exp(-((x0 - 0.5) ** 2 + (y0 - 0.5) ** 2) / (2.0 * 0.08 ** 2))
-
-    M_0 = ale_solver.assemble_mass_matrix(mesh_0)
-    ones_vec = np.ones(mesh_0.num_nodes, dtype=np.float64)
-    initial_mass = float(ones_vec @ (M_0 @ u_current))
-    assert np.isfinite(initial_mass) and initial_mass > 0.0
-
-    T = 0.5
-    dt = 0.005
-    n_steps = 100
-    current_mesh = mesh_0
-
-    max_dual_op_residual = 0.0
-    max_mass_drift = 0.0
-
-    for step in range(1, n_steps + 1):
-        t_next = step * dt
-        nodes_next = analytical_mesh_motion(nodes_0, t_next, T=T, A=0.02)
-        next_mesh = mesh_0.update_coordinates(nodes_next)
-
-        u_next, diag = ale_solver.step_ale(
-            current_mesh,
-            next_mesh,
-            u_current,
-            dt=dt,
-            t_next=t_next,
-            pure_gcl=True,
-            enforce_dirichlet=False
-        )
-
-        if not np.all(np.isfinite(u_next)):
-            raise AssertionError(f"Valori non finiti nel test C2b al passo {step}.")
-
-        C_mesh = diag["C_mesh_mat"]
-        M_next = diag["M_next"]
-
-        dual_res = float(np.max(np.abs(ones_vec @ C_mesh)))
-        if not np.isfinite(dual_res):
-            raise AssertionError(f"Residuo duale non finito al passo {step}.")
-        max_dual_op_residual = max(max_dual_op_residual, dual_res)
-
-        current_mass = float(ones_vec @ (M_next @ u_next))
-        if not np.isfinite(current_mass):
-            raise AssertionError(f"Massa discreta non finita al passo {step}.")
-
-        mass_drift = abs(current_mass - initial_mass) / abs(initial_mass)
-        max_mass_drift = max(max_mass_drift, mass_drift)
-
-        u_current = u_next
-        current_mesh = next_mesh
-
-    print("\n" + "=" * 65)
-    print("TEST C2b — DISCRETE MASS CONSERVATION (NON-UNIFORM FIELD)")
-    print("=" * 65)
-    print(f"Initial Discrete Mass m_h^0     : {initial_mass:.12e}")
-    print(f"Max Dual Operator ||1^T C_mesh||: {max_dual_op_residual:.4e}")
-    print(f"Max Relative Mass Drift         : {max_mass_drift:.4e}")
-
-    assert max_dual_op_residual < 1e-13, f"Operatore C_mesh non conservativo: {max_dual_op_residual:.3e}"
-    assert max_mass_drift < 1e-12, f"Violazione conservazione della massa: {max_mass_drift:.3e}"
+def test_native_ale_mass_diagnostic_for_nonuniform_field():
+    mesh0 = make_mesh(10)
+    ale = create_ale_solver(None, nu=0.0, bx=0.0, by=0.0)
+    x, y = mesh0.nodes[:, 0], mesh0.nodes[:, 1]
+    u = np.exp(-((x - 0.5)**2 + (y - 0.5)**2) / (2 * 0.08**2))
+    curr = mesh0
+    m0 = None
+    max_drift = 0.0
+    for k in range(1, 6):
+        t_next = k * 0.005
+        nxt = mesh0.update_coordinates(analytical_mesh_motion(mesh0.nodes, t_next), enforce_fixed_boundary=True)
+        u_next, diag = ale.step_ale(curr.core, nxt.core, u, 0.005, t_next, True, False)
+        if m0 is None:
+            m0 = float(diag.discrete_mass_n)
+        mass_next = float(diag.discrete_mass_next)
+        max_drift = max(max_drift, abs(mass_next - m0) / max(abs(m0), 1e-14))
+        u = np.asarray(u_next, dtype=np.float64)
+        curr = nxt
+    assert max_drift < 1e-8

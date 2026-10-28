@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 import numpy as np
 import pytest
+
+pytest.importorskip("gdm._gdm_core", reason="Il preprocessing topologico richiede il core C++/deal.II", exc_type=ImportError)
 import torch
 
 from dataset.dataset import GraphDynamicMeshingDataset, collate_graph_batch

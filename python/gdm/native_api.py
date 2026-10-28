@@ -31,7 +31,7 @@ def _cells_array(values: np.ndarray) -> np.ndarray:
 
 
 class NativeMeshAdapter:
-    """Adattatore di ``_gdm_core.MeshState`` compatibile con le API di ``TriangularMesh2D``."""
+    """Adapter leggero per lo stato mesh di ``gdm._gdm_core``; nessuna mesh Python parallela."""
 
     def __init__(self, core_mesh: "_gdm_core.MeshState") -> None:
         self._core = core_mesh
@@ -106,7 +106,7 @@ class NativeMeshAdapter:
 
     @property
     def edges(self) -> np.ndarray:
-        """Archi orientati bidirezionali, come ``TriangularMesh2D.edges``."""
+        """Archi orientati bidirezionali esposti dal core nativo per la GNN."""
         return self.directed_edges
 
     @property
@@ -164,6 +164,91 @@ def compute_native_mesh_metrics(
     return dict(_gdm_core.compute_mesh_metrics(mesh.core, float(tol_degenerate)))
 
 
+def compute_native_mesh_metrics_arrays(
+    nodes: np.ndarray,
+    cells: np.ndarray,
+    tol_degenerate: float = 1.0e-14,
+) -> Dict[str, Any]:
+    """Calcola le metriche della mesh direttamente nel core C++ da array NumPy.
+
+    Non costruisce un ``MeshState``: è adatto a diagnosticare proposte GNN/oracle
+    che possono contenere celle invertite e quindi non sono ancora ammissibili
+    come triangolazione FEM. Tutta la geometria è valutata dal binding nativo.
+    """
+    nodes_arr = _points_array(nodes, "nodes")
+    cells_arr = _cells_array(cells)
+    if nodes_arr.shape[0] < 3 or cells_arr.shape[0] < 1:
+        raise ValueError("La mesh deve contenere almeno 3 nodi e 1 triangolo.")
+    if np.any(cells_arr < 0) or np.any(cells_arr >= nodes_arr.shape[0]):
+        raise ValueError("cells contiene indici nodali fuori intervallo.")
+    if np.any(
+        (cells_arr[:, 0] == cells_arr[:, 1])
+        | (cells_arr[:, 1] == cells_arr[:, 2])
+        | (cells_arr[:, 0] == cells_arr[:, 2])
+    ):
+        raise ValueError("cells contiene triangoli con indici nodali ripetuti.")
+    if not np.isfinite(tol_degenerate) or tol_degenerate <= 0.0:
+        raise ValueError("tol_degenerate deve essere finito e strettamente positivo.")
+    return dict(
+        _gdm_core.compute_mesh_metrics_arrays(
+            nodes_arr, cells_arr, float(tol_degenerate)
+        )
+    )
+
+
+def compute_native_field_gradients(
+    mesh: NativeMeshAdapter,
+    u: np.ndarray,
+    pde: Optional["_gdm_core.ManufacturedConvectionDiffusion2D"] = None,
+    t: float = 0.0,
+    exact_gradient: bool = False,
+) -> np.ndarray:
+    """Calcola i gradienti nodali tramite il core nativo, senza FEM Python."""
+    field = np.ascontiguousarray(u, dtype=np.float64)
+    if field.shape != (mesh.num_nodes,) or not np.all(np.isfinite(field)):
+        raise ValueError(f"u deve essere un vettore finito di shape ({mesh.num_nodes},).")
+    if not np.isfinite(t):
+        raise ValueError("t deve essere finito.")
+    grad = np.asarray(
+        _gdm_core.compute_field_gradients(
+            mesh.core, field, pde, float(t), bool(exact_gradient)
+        ),
+        dtype=np.float64,
+    )
+    if grad.shape != (mesh.num_nodes, 2) or not np.all(np.isfinite(grad)):
+        raise RuntimeError("Il core nativo ha restituito gradienti non validi.")
+    return grad
+
+
+def apply_native_safety_filter_arrays(
+    nodes: np.ndarray,
+    displacement: np.ndarray,
+    cells: np.ndarray,
+    boundary_nodes: Optional[np.ndarray] = None,
+    epsilon: float = 1.0e-4,
+    safety_margin: float = 1.0e-6,
+    tol_deg: float = 1.0e-12,
+    lock_boundary_nodes: bool = True,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """Applica il filtro di sicurezza C++ a coordinate/connettività NumPy.
+
+    La mesh di riferimento deve essere valida; ``displacement`` può invece
+    rappresentare una proposta non ammissibile. Le decisioni di sicurezza e la
+    contrazione lungo il segmento sono sempre calcolate dal core nativo.
+    """
+    mesh = NativeMeshAdapter.from_arrays(nodes, cells, boundary_nodes)
+    return apply_native_safety_filter(
+        mesh,
+        displacement,
+        epsilon=epsilon,
+        safety_margin=safety_margin,
+        tol_deg=tol_deg,
+        lock_boundary_nodes=lock_boundary_nodes,
+        verbose=verbose,
+    )
+
+
 def apply_native_safety_filter(
     mesh: NativeMeshAdapter,
     displacement: np.ndarray,
@@ -212,6 +297,36 @@ def compute_native_continuous_errors(
     err_l2, err_h1 = _gdm_core.compute_continuous_errors(mesh.core, field, pde, float(t))
     return float(err_l2), float(err_h1)
 
+def compute_native_continuous_error_details(
+    mesh: NativeMeshAdapter,
+    u_h: np.ndarray,
+    pde: "_gdm_core.ManufacturedConvectionDiffusion2D",
+    t: float,
+) -> Dict[str, float]:
+    """Restituisce norme L2/H1 assolute e relative integrate da deal.II/C++."""
+    field = np.ascontiguousarray(u_h, dtype=np.float64)
+    if field.shape != (mesh.num_nodes,) or not np.all(np.isfinite(field)):
+        raise ValueError(f"u_h deve essere un vettore finito di shape ({mesh.num_nodes},).")
+    if not np.isfinite(t):
+        raise ValueError("t deve essere finito.")
+    values = dict(
+        _gdm_core.compute_continuous_error_details(
+            mesh.core, field, pde, float(t)
+        )
+    )
+    return {str(k): float(v) for k, v in values.items()}
+
+def compute_native_discrete_mass(
+    mesh: NativeMeshAdapter, u: np.ndarray
+) -> float:
+    """Integra il campo nodale sulla mesh mediante il kernel C++ nativo."""
+    field = np.ascontiguousarray(u, dtype=np.float64)
+    if field.shape != (mesh.num_nodes,) or not np.all(np.isfinite(field)):
+        raise ValueError(f"u deve essere un vettore finito di shape ({mesh.num_nodes},).")
+    result = float(_gdm_core.compute_discrete_mass(mesh.core, field))
+    if not np.isfinite(result):
+        raise RuntimeError("Il core nativo ha restituito una massa non finita.")
+    return result
 
 def remap_p1_native(
     old_mesh: NativeMeshAdapter, old_u: np.ndarray, new_mesh: NativeMeshAdapter
@@ -220,7 +335,6 @@ def remap_p1_native(
     if field.shape != (old_mesh.num_nodes,):
         raise ValueError(f"old_u deve avere shape ({old_mesh.num_nodes},), ricevuta {field.shape}.")
     return dict(_gdm_core.remap_p1_solution(old_mesh.core, field, new_mesh.core))
-
 
 def remap_l2_native(
     old_mesh: NativeMeshAdapter, old_u: np.ndarray, new_mesh: NativeMeshAdapter

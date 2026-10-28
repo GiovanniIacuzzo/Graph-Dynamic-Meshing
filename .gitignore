@@ -1,10 +1,12 @@
 __pycache__/
 .pytest_cache/
 build-check-971/
-codici/
+build/
+backup/
 data/
 results/
 compiler/
 CMakeLists.txt.before_dealii_compat.bak
 idea.md
 .DS_Store
+*.so

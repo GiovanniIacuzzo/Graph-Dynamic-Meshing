@@ -1,11 +1,13 @@
 
 import numpy as np
+import pytest
 
 from oracle.field import GaussianBumpField
 from oracle.optimizer import OfflineMeshOptimizer
 
 
 def test_oracle_analytic_gradient_matches_finite_differences():
+    pytest.importorskip("gdm._gdm_core", reason="Oracle geometry is delegated to the native core; compile deal.II first.", exc_type=ImportError)
     nx = 4
     ny = 4
 

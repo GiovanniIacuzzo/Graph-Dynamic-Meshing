@@ -232,7 +232,14 @@ PYBIND11_MODULE(_gdm_core, m) {
 
     py::class_<ManufacturedConvectionDiffusion2D>(m, "ManufacturedConvectionDiffusion2D")
         .def(py::init<const PDEParameters&>(), py::arg("params") = PDEParameters{})
+        .def_property_readonly("bx", [](const ManufacturedConvectionDiffusion2D& self) { return self.parameters().bx; })
+        .def_property_readonly("by", [](const ManufacturedConvectionDiffusion2D& self) { return self.parameters().by; })
+        .def_property_readonly("nu", [](const ManufacturedConvectionDiffusion2D& self) { return self.parameters().nu; })
+        .def_property_readonly("sigma", [](const ManufacturedConvectionDiffusion2D& self) { return self.parameters().sigma; })
+        .def_property_readonly("beta", [](const ManufacturedConvectionDiffusion2D& self) { return self.parameters().beta; })
+        .def_property_readonly("T", [](const ManufacturedConvectionDiffusion2D& self) { return self.parameters().T; })
         .def("get_center", &ManufacturedConvectionDiffusion2D::get_center, py::arg("t"))
+        // Array API used by the native runtime: nodes has shape (N, 2).
         .def("evaluate_solution",
              [](const ManufacturedConvectionDiffusion2D& self,
                 const py::array_t<double, py::array::c_style | py::array::forcecast>& nodes,
@@ -246,7 +253,52 @@ PYBIND11_MODULE(_gdm_core, m) {
                  return scalar_vec_to_array(res);
              },
              py::arg("nodes"),
-             py::arg("t"));
+             py::arg("t"))
+        // Compatibility array API for oracle/objective code: x, y are matching 1D arrays.
+        .def("evaluate_solution",
+             [](const ManufacturedConvectionDiffusion2D& self,
+                const py::array_t<double, py::array::c_style | py::array::forcecast>& x,
+                const py::array_t<double, py::array::c_style | py::array::forcecast>& y,
+                double t) {
+                 if (x.ndim() != 1 || y.ndim() != 1 || x.shape(0) != y.shape(0))
+                     throw std::invalid_argument("x e y devono essere vettori 1D della stessa lunghezza.");
+                 const auto xr = x.unchecked<1>();
+                 const auto yr = y.unchecked<1>();
+                 std::vector<double> res(static_cast<std::size_t>(x.shape(0)));
+                 for (py::ssize_t i = 0; i < x.shape(0); ++i) {
+                     if (!std::isfinite(xr(i)) || !std::isfinite(yr(i)))
+                         throw std::invalid_argument("x o y contiene valori non finiti.");
+                     res[static_cast<std::size_t>(i)] = self.evaluate_solution(xr(i), yr(i), t);
+                 }
+                 return scalar_vec_to_array(res);
+             },
+             py::arg("x"), py::arg("y"), py::arg("t"))
+        .def("evaluate_exact",
+             [](const ManufacturedConvectionDiffusion2D& self,
+                const py::array_t<double, py::array::c_style | py::array::forcecast>& x,
+                const py::array_t<double, py::array::c_style | py::array::forcecast>& y,
+                double t) {
+                 if (x.ndim() != 1 || y.ndim() != 1 || x.shape(0) != y.shape(0))
+                     throw std::invalid_argument("x e y devono essere vettori 1D della stessa lunghezza.");
+                 const auto xr = x.unchecked<1>();
+                 const auto yr = y.unchecked<1>();
+                 const auto n = static_cast<std::size_t>(x.shape(0));
+                 std::vector<double> u(n), ux(n), uy(n), uxx(n), uyy(n), ut(n), forcing(n);
+                 for (std::size_t i = 0; i < n; ++i) {
+                     const double xx = xr(static_cast<py::ssize_t>(i));
+                     const double yy = yr(static_cast<py::ssize_t>(i));
+                     if (!std::isfinite(xx) || !std::isfinite(yy))
+                         throw std::invalid_argument("x o y contiene valori non finiti.");
+                     const auto e = self.evaluate_exact(xx, yy, t);
+                     u[i] = e.u; ux[i] = e.ux; uy[i] = e.uy;
+                     uxx[i] = e.uxx; uyy[i] = e.uyy; ut[i] = e.ut; forcing[i] = e.f;
+                 }
+                 return py::make_tuple(scalar_vec_to_array(u), scalar_vec_to_array(ux),
+                                       scalar_vec_to_array(uy), scalar_vec_to_array(uxx),
+                                       scalar_vec_to_array(uyy), scalar_vec_to_array(ut),
+                                       scalar_vec_to_array(forcing));
+             },
+             py::arg("x"), py::arg("y"), py::arg("t"));
 
     py::class_<ConvectionDiffusionFEM2D>(m, "ConvectionDiffusionFEM2D", py::dynamic_attr())
         .def(py::init<const MeshState&, const ManufacturedConvectionDiffusion2D&, const LinearSolverParameters&>(),
@@ -333,6 +385,38 @@ PYBIND11_MODULE(_gdm_core, m) {
              py::arg("t_next"),
              py::arg("pure_gcl") = false,
              py::arg("enforce_dirichlet") = true);
+
+    m.def("compute_mesh_metrics_arrays",
+          [](const py::array_t<double, py::array::c_style | py::array::forcecast>& nodes,
+             const py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>& cells,
+             double tol_degenerate) {
+              const auto c_nodes = array_to_coords(nodes, "nodes");
+              const auto c_cells = array_to_cells(cells);
+              MeshQualityMetrics m_out;
+              {
+                  py::gil_scoped_release release;
+                  m_out = compute_mesh_metrics(c_nodes, c_cells, tol_degenerate);
+              }
+              py::dict d;
+              d["jacobians"] = scalar_vec_to_array(m_out.jacobians);
+              d["areas"] = scalar_vec_to_array(m_out.areas);
+              d["normalized_jacobians"] = scalar_vec_to_array(m_out.normalized_jacobians);
+              d["aspect_ratio"] = scalar_vec_to_array(m_out.aspect_ratio);
+              d["min_angle"] = scalar_vec_to_array(m_out.min_angle);
+              d["max_angle"] = scalar_vec_to_array(m_out.max_angle);
+              d["escobar_quality"] = scalar_vec_to_array(m_out.escobar_quality);
+              d["inverted"] = bool_vec_to_array(m_out.inverted);
+              d["degenerate"] = bool_vec_to_array(m_out.degenerate);
+              d["min_jacobian"] = m_out.min_jacobian;
+              d["max_jacobian"] = m_out.max_jacobian;
+              d["min_escobar_quality"] = m_out.min_escobar_quality;
+              d["max_aspect_ratio"] = m_out.max_aspect_ratio;
+              d["mean_escobar_quality"] = m_out.mean_escobar_quality;
+              d["num_inverted"] = m_out.num_inverted;
+              d["num_degenerate"] = m_out.num_degenerate;
+              return d;
+          },
+          py::arg("nodes"), py::arg("cells"), py::arg("tol_degenerate") = 1.0e-14);
 
     m.def("compute_mesh_metrics",
           [](const MeshState& mesh, double tol_degenerate) {
@@ -470,4 +554,37 @@ PYBIND11_MODULE(_gdm_core, m) {
           py::arg("u_h"),
           py::arg("pde"),
           py::arg("t"));
+
+    // Full error details for reporting utilities that require absolute and relative norms.
+    m.def("compute_continuous_error_details",
+          [](const MeshState& mesh,
+             const py::array_t<double, py::array::c_style | py::array::forcecast>& u_h,
+             const ManufacturedConvectionDiffusion2D& pde,
+             double t) {
+              auto u_vec = array_to_scalar_vec(u_h, "u_h");
+              ContinuousErrorNorms norms;
+              {
+                  py::gil_scoped_release release;
+                  norms = compute_continuous_errors(mesh, u_vec, pde, t);
+              }
+              py::dict out;
+              out["abs_l2_error"] = norms.abs_l2_error;
+              out["rel_l2_error"] = norms.rel_l2_error;
+              out["abs_h1_seminorm_error"] = norms.abs_h1_seminorm_error;
+              out["rel_h1_seminorm_error"] = norms.rel_h1_seminorm_error;
+              return out;
+          },
+          py::arg("mesh"),
+          py::arg("u_h"),
+          py::arg("pde"),
+          py::arg("t"));
+
+    m.def("compute_discrete_mass",
+          [](const MeshState& mesh,
+             const py::array_t<double, py::array::c_style | py::array::forcecast>& u) {
+              auto u_vec = array_to_scalar_vec(u, "u");
+              py::gil_scoped_release release;
+              return ALESolver2D::compute_discrete_mass(mesh, u_vec);
+          },
+          py::arg("mesh"), py::arg("u"));
 }

@@ -17,6 +17,15 @@ Genera:
     - Grafici di confronto scientifico (results/benchmark_plots.png)
 """
 
+# Direct-execution bootstrap: make the repository and Python source tree importable.
+import sys as _gdm_sys
+from pathlib import Path as _GDMPath
+_GDM_ROOT = _GDMPath(__file__).resolve().parents[1]
+for _gdm_path in (_GDM_ROOT, _GDM_ROOT / "python"):
+    if str(_gdm_path) not in _gdm_sys.path:
+        _gdm_sys.path.insert(0, str(_gdm_path))
+
+
 import sys
 import json
 import argparse
@@ -29,14 +38,11 @@ import matplotlib.pyplot as plt
 # Inclusione della cartella root nel path di sistema
 sys.path.append(str(Path(__file__).resolve().parent))
 
-from geometry.mesh import TriangularMesh2D
-from geometry.geometry import compute_mesh_metrics, compute_mesh_quality_summary
-from geometry.safety import apply_safety_filter
+from gdm import NativeMeshAdapter, compute_native_mesh_metrics_arrays
 from oracle.field import GaussianBumpField
 from oracle.objective import OracleObjective
 from evaluation.metrics import (
     compute_displacement_metrics,
-    compute_mesh_geometric_metrics,
     format_computational_timings
 )
 from inference import MeshMoverInferenceEngine
@@ -70,7 +76,8 @@ class BenchmarkSuite:
 
     def _evaluate_configuration(
         self,
-        mesh: TriangularMesh2D,
+        nodes: np.ndarray,
+        cells: np.ndarray,
         field: GaussianBumpField,
         base_nodes: np.ndarray,
         boundary_nodes: np.ndarray,
@@ -83,26 +90,29 @@ class BenchmarkSuite:
         objective_evaluator = OracleObjective(
             reference_field=field,
             initial_nodes=base_nodes,
-            cells=mesh.cells,
+            cells=cells,
             boundary_nodes=boundary_nodes,
             lambda_D=self.oracle_cfg["objective"]["lambda_D"],
             lambda_Q=self.oracle_cfg["objective"]["lambda_Q"],
             epsilon=self.epsilon
         )
 
-        eval_res = objective_evaluator.evaluate(mesh.nodes)
-        geom_metrics = compute_mesh_geometric_metrics(mesh)
+        eval_res = objective_evaluator.evaluate(nodes)
+        geom_metrics = compute_native_mesh_metrics_arrays(nodes, cells)
+        jacobians = np.asarray(geom_metrics["jacobians"], dtype=np.float64)
+        quality = np.asarray(geom_metrics["escobar_quality"], dtype=np.float64)
+        aspect = np.asarray(geom_metrics["aspect_ratio"], dtype=np.float64)
 
         return {
             "baseline": baseline_name,
             "interpolation_error": float(eval_res["interpolation_error"]),
             "total_objective": float(eval_res["total_objective"]),
             "is_valid": bool(eval_res["is_valid"]),
-            "min_jacobian": float(geom_metrics["min_jacobian"]),
-            "mean_jacobian": float(geom_metrics["mean_jacobian"]),
-            "inverted_cells": int(geom_metrics["inverted_cells"]),
-            "mean_mesh_quality": float(geom_metrics["mean_mesh_quality"]),
-            "max_aspect_ratio": float(geom_metrics["max_aspect_ratio"])
+            "min_jacobian": float(np.min(jacobians)),
+            "mean_jacobian": float(np.mean(jacobians)),
+            "inverted_cells": int(np.sum(geom_metrics["inverted"])),
+            "mean_mesh_quality": float(np.mean(quality)),
+            "max_aspect_ratio": float(np.max(aspect)),
         }
 
     def run_benchmark(self) -> Dict[str, Any]:
@@ -154,7 +164,7 @@ class BenchmarkSuite:
                 target_disp = sample["target"]["displacement"]
                 params = sample["metadata"]["parameters"]
 
-                mesh_0 = TriangularMesh2D(nodes_0, cells)
+                mesh_0 = NativeMeshAdapter.from_arrays(nodes_0, cells)
                 field = GaussianBumpField(
                     mu_x=params["mu_x"],
                     mu_y=params["mu_y"],
@@ -165,7 +175,7 @@ class BenchmarkSuite:
                 # -------------------------------------------------------------
                 # Baseline B0: Fixed Mesh
                 # -------------------------------------------------------------
-                res_b0 = self._evaluate_configuration(mesh_0, field, nodes_0, mesh_0.boundary_nodes, "B0_fixed")
+                res_b0 = self._evaluate_configuration(nodes_0, cells, field, nodes_0, mesh_0.boundary_nodes, "B0_fixed")
                 e_fixed = res_b0["interpolation_error"]
                 aggregated_results[split_name]["B0_fixed"]["interp_error"].append(e_fixed)
                 aggregated_results[split_name]["B0_fixed"]["min_jacobian"].append(res_b0["min_jacobian"])
@@ -189,8 +199,7 @@ class BenchmarkSuite:
                 # -------------------------------------------------------------
                 # Baseline B5: Oracle Reference
                 # -------------------------------------------------------------
-                mesh_oracle = mesh_0.update_coordinates(opt_nodes)
-                res_b5 = self._evaluate_configuration(mesh_oracle, field, nodes_0, mesh_0.boundary_nodes, "B5_oracle")
+                res_b5 = self._evaluate_configuration(opt_nodes, cells, field, nodes_0, mesh_0.boundary_nodes, "B5_oracle")
                 e_oracle = res_b5["interpolation_error"]
                 
                 # Lettura del timing salvato nei metadati; se assente calcolo offline reale
@@ -246,8 +255,7 @@ class BenchmarkSuite:
                 # Baseline B3: GNN Raw
                 # -------------------------------------------------------------
                 nodes_b3 = nodes_0 + raw_pred_disp
-                mesh_b3 = mesh_0.update_coordinates(nodes_b3)
-                res_b3 = self._evaluate_configuration(mesh_b3, field, nodes_0, mesh_0.boundary_nodes, "B3_gnn_raw")
+                res_b3 = self._evaluate_configuration(nodes_b3, cells, field, nodes_0, mesh_0.boundary_nodes, "B3_gnn_raw")
 
                 aggregated_results[split_name]["B3_gnn_raw"]["interp_error"].append(res_b3["interpolation_error"])
                 aggregated_results[split_name]["B3_gnn_raw"]["min_jacobian"].append(res_b3["min_jacobian"])
@@ -260,8 +268,8 @@ class BenchmarkSuite:
                 # -------------------------------------------------------------
                 # Baseline B4: GNN + Safety Filter (Framework Proposto)
                 # -------------------------------------------------------------
-                mesh_b4 = pred_res["adapted_mesh"]
-                res_b4 = self._evaluate_configuration(mesh_b4, field, nodes_0, mesh_0.boundary_nodes, "B4_gnn_safety")
+                safe_nodes = np.asarray(pred_res["new_nodes"], dtype=np.float64)
+                res_b4 = self._evaluate_configuration(safe_nodes, cells, field, nodes_0, mesh_0.boundary_nodes, "B4_gnn_safety")
                 e_gnn = res_b4["interpolation_error"]
 
                 gap_den = max(e_fixed - e_oracle, 1e-12)

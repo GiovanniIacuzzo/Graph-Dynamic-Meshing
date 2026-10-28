@@ -31,17 +31,16 @@ from matplotlib.patches import Patch
 
 # Inclusione radice progetto nel path
 ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
+if str(ROOT_DIR / "python") not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR / "python"))
 
 from utils.utils import load_config, ensure_dir, setup_logger, Timer, load_pickle
-from geometry.mesh import TriangularMesh2D
-from geometry.geometry import compute_mesh_metrics
-from geometry.safety import apply_safety_filter
+from gdm import NativeMeshAdapter, compute_native_mesh_metrics_arrays, apply_native_safety_filter
 from oracle.field import GaussianBumpField
 from oracle.objective import OracleObjective
 from oracle.optimizer import OfflineMeshOptimizer
 from inference import MeshMoverInferenceEngine
-from generate_dataset import create_initial_mesh_2d
 
 
 class StageAPaperCampaign:
@@ -53,7 +52,7 @@ class StageAPaperCampaign:
         self.logger = setup_logger("StageA_Campaign", log_file=self.output_dir / "campaign.log")
         
         checkpoint_path = ROOT_DIR / "results" / "stage_a" / "checkpoints" / "best_model.pt"
-        assert checkpoint_path.exists(), f"Checkpoint non trovato in {checkpoint_path}. Eseguire prima train.py!"
+        assert checkpoint_path.exists(), f"Checkpoint non trovato in {checkpoint_path}. Eseguire prima training/train.py!"
         
         # Motore di inferenza CPU per comparazione equa CPU vs CPU con SciPy
         self.engine = MeshMoverInferenceEngine(
@@ -63,10 +62,10 @@ class StageAPaperCampaign:
         )
         
         self.epsilon = float(self.config["geometry"]["safety"]["epsilon"])
-        self.base_mesh = create_initial_mesh_2d(
+        self.base_mesh = NativeMeshAdapter.from_domain(
             self.config["geometry"]["domain"],
-            nx=self.config["geometry"]["initial_grid"]["nx"],
-            ny=self.config["geometry"]["initial_grid"]["ny"]
+            nx=int(self.config["geometry"]["initial_grid"]["nx"]),
+            ny=int(self.config["geometry"]["initial_grid"]["ny"]),
         )
         self.logger.info("Setup della campagna sperimentale completato con successo.")
 
@@ -169,15 +168,15 @@ class StageAPaperCampaign:
         for k in k_values:
             disp_k = k * base_disp
             raw_nodes = self.base_mesh.nodes + disp_k
-            m_raw = compute_mesh_metrics(raw_nodes, self.base_mesh.cells)
+            m_raw = compute_native_mesh_metrics_arrays(raw_nodes, self.base_mesh.cells)
             raw_min_j.append(np.min(m_raw["jacobians"]))
             raw_inverted.append(np.sum(m_raw["inverted"]))
 
-            alpha, _, _, min_j_s = apply_safety_filter(
-                self.base_mesh.nodes, disp_k, self.base_mesh.cells, epsilon=self.epsilon
+            filtered = apply_native_safety_filter(
+                self.base_mesh, disp_k, epsilon=self.epsilon, lock_boundary_nodes=True
             )
-            alphas.append(alpha)
-            safe_min_j.append(min_j_s)
+            alphas.append(float(filtered["alpha_global"]))
+            safe_min_j.append(float(filtered["min_jacobian_after"]))
 
         # FIGURA 3: Safety Curve
         fig, ax1 = plt.subplots(figsize=(8, 5))
@@ -221,7 +220,7 @@ class StageAPaperCampaign:
         field = GaussianBumpField(mu_x=0.5, mu_y=0.5, sigma=0.05, amplitude=1.0)
 
         for nx in resolutions:
-            mesh = create_initial_mesh_2d(self.config["geometry"]["domain"], nx=nx, ny=nx)
+            mesh = NativeMeshAdapter.from_domain(self.config["geometry"]["domain"], nx=nx, ny=nx)
             N = mesh.num_nodes
             n_nodes_list.append(N)
             u, grad_u, _, _ = field.evaluate(mesh.nodes[:, 0], mesh.nodes[:, 1])
@@ -443,12 +442,14 @@ class StageAPaperCampaign:
         # VISUALIZZAZIONE 2: Stress Visivo (Raw k=6.0 vs Safety Filtered)
         disp_stress = 6.0 * pred["predicted_displacement"]
         raw_stress_nodes = self.base_mesh.nodes + disp_stress
-        m_stress_raw = compute_mesh_metrics(raw_stress_nodes, self.base_mesh.cells)
+        m_stress_raw = compute_native_mesh_metrics_arrays(raw_stress_nodes, self.base_mesh.cells)
         inv_idx = np.where(m_stress_raw["inverted"])[0]
 
-        alpha_s, safe_stress_nodes, _, _ = apply_safety_filter(
-            self.base_mesh.nodes, disp_stress, self.base_mesh.cells, epsilon=self.epsilon
+        stress_filter = apply_native_safety_filter(
+            self.base_mesh, disp_stress, epsilon=self.epsilon, lock_boundary_nodes=True
         )
+        alpha_s = float(stress_filter["alpha_global"])
+        safe_stress_nodes = np.asarray(stress_filter["safe_nodes"], dtype=np.float64)
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
 

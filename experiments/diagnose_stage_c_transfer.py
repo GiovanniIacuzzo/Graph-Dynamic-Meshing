@@ -1,131 +1,88 @@
-"""
-experiments/diagnose_stage_c_transfer.py
-Script di isolamento per diagnosticare se la perdita di accuratezza in Stage C
-deriva dal remapping P1, dalla frequenza di adattamento o dalla dinamica dei nodi.
-"""
+"""Diagnose transfer error with the native C++/deal.II remappers.
 
+This script consumes the reproducible target archive created by
+``stage_c_campaign.py`` and reports one-step and repeated-transfer errors.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
 from pathlib import Path
+
 import numpy as np
 
-from utils.utils import load_config
-from generate_dataset import create_initial_mesh_2d
-from numerics.pde import ManufacturedConvectionDiffusion2D
-from numerics.fem import ConvectionDiffusionFEM2D, compute_field_gradients
-from numerics.remap import remap_p1_solution
-from numerics.remap_l2 import remap_l2_projection
-from numerics.dynamic_solver import compute_continuous_errors
-from inference import MeshMoverInferenceEngine
+ROOT = Path(__file__).resolve().parents[1]
+for _p in (ROOT, ROOT / "python"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+from utils.utils import ensure_dir, load_config
+from gdm import NativeMeshAdapter, create_pde_model, compute_native_continuous_errors, remap_p1_native, remap_l2_native, compute_native_mesh_metrics
 
 
-def run_diagnostic():
-    config = load_config("config/config.yaml")
-    domain = config["geometry"]["domain"]
-    checkpoint = Path("results/stage_a/checkpoints/best_model.pt")
-    engine = MeshMoverInferenceEngine(checkpoint, config, device="cpu")
+def run_diagnostic(config_path: str = "config/config.yaml", targets_path: str = "results/stage_c/raw_metrics/stage_c_replay_targets.npz", output_dir: str = "results/stage_c/transfer_diagnostic") -> dict:
+    target_path = Path(targets_path).resolve()
+    if not target_path.is_file():
+        raise FileNotFoundError(f"Target archive not found: {target_path}; run experiments/stage_c_campaign.py first.")
+    cfg = load_config(str(Path(config_path).resolve()))
+    with np.load(target_path, allow_pickle=False) as z:
+        targets = np.asarray(z["target_nodes"], dtype=np.float64)
+        cells = np.asarray(z["cells"], dtype=np.int64)
+        init_nodes = np.asarray(z["initial_nodes"], dtype=np.float64)
+        times = np.asarray(z["adaptation_times"], dtype=np.float64)
+        T = float(z["T"])
+        nx = int(z["nx"]); ny = int(z["ny"])
+    base = NativeMeshAdapter.from_arrays(init_nodes, cells)
+    pde = create_pde_model(bx=0.4, by=0.2, nu=1e-3, sigma=0.06, beta=0.5, T=T)
+    rows = []
+    p1_state = None
+    l2_state = None
+    for k, nodes in enumerate(targets):
+        t = float(times[k])
+        target = base.update_coordinates(nodes, enforce_fixed_boundary=True)
+        geom = compute_native_mesh_metrics(target)
+        source_u = np.asarray(pde.evaluate_solution(base.nodes, t), dtype=np.float64)
+        p1 = remap_p1_native(base, source_u, target)
+        l2 = remap_l2_native(base, source_u, target)
+        e0, _ = compute_native_continuous_errors(base, source_u, pde, t)
+        ep1, hp1 = compute_native_continuous_errors(target, p1["remapped_field"], pde, t)
+        el2, hl2 = compute_native_continuous_errors(target, l2["remapped_field"], pde, t)
+        if p1_state is None:
+            p1_state = source_u.copy(); l2_state = source_u.copy()
+        p1_state = remap_p1_native(base, p1_state, target)["remapped_field"]
+        p1_state = remap_p1_native(target, p1_state, base)["remapped_field"]
+        l2_state = remap_l2_native(base, l2_state, target)["remapped_field"]
+        l2_state = remap_l2_native(target, l2_state, base)["remapped_field"]
+        rows.append({
+            "index": k, "time": t, "min_jacobian": float(geom["min_jacobian"]),
+            "initial_l2": float(e0), "p1_l2": float(ep1), "p1_h1": float(hp1),
+            "l2_projection_l2": float(el2), "l2_projection_h1": float(hl2),
+            "p1_mass_drift": float(p1["relative_mass_drift"]),
+            "l2_mass_drift": float(l2["relative_mass_drift"]),
+        })
+    ep1_loop, _ = compute_native_continuous_errors(base, p1_state, pde, float(times[-1]))
+    el2_loop, _ = compute_native_continuous_errors(base, l2_state, pde, float(times[-1]))
+    payload = {
+        "experiment": "native_stage_c_transfer_diagnostic",
+        "backend": "C++20/deal.II through pybind11",
+        "target_archive": str(target_path), "nx": nx, "ny": ny, "rows": rows,
+        "repeated_round_trip_final_l2": {"p1": float(ep1_loop), "l2": float(el2_loop)},
+    }
+    out = ensure_dir(output_dir)
+    (out / "native_transfer_diagnostic.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps(payload["repeated_round_trip_final_l2"], indent=2))
+    return payload
 
-    pde = ManufacturedConvectionDiffusion2D(
-        bx=0.4, by=0.2, nu=1e-3, sigma=0.06, beta=0.5, T=0.5
-    )
 
-    mesh_init = create_initial_mesh_2d(domain, nx=32, ny=32)
-    u_exact_0 = pde.evaluate_solution(mesh_init.nodes[:, 0], mesh_init.nodes[:, 1], 0.0)
-
-    # -------------------------------------------------------------------------
-    # TEST 1: Crollo di accuratezza per P1 vs L2 su 10 adattamenti STATICI a t=0
-    # (Senza alcuna evoluzione PDE, solo proiezioni ripetute avanti/indietro)
-    # -------------------------------------------------------------------------
-    print("\n" + "=" * 75)
-    print("DIAGNOSTICA 1: ACCUMULO ERRORE DI PURO REMAPPING (10 cicli a t = 0)")
-    print("=" * 75)
-
-    grad_0 = compute_field_gradients(mesh_init, u_exact_0, pde, 0.0, gradient_mode="fem")
-    pred_0 = engine.predict(mesh_init, u_exact_0, grad_0)
-    mesh_adapted = pred_0["adapted_mesh"]
-
-    err_init_l2, _ = compute_continuous_errors(mesh_init, u_exact_0, pde, 0.0)
-    print(f"Errore L2 continuo iniziale su griglia 32x32 fissa : {err_init_l2*100:.4f}%")
-
-    # A) 1 singolo step di Remap verso la mesh adattata
-    u_p1_1 = remap_p1_solution(mesh_init.nodes, mesh_init.cells, u_exact_0, mesh_adapted.nodes)
-    u_l2_1 = remap_l2_projection(
-        mesh_init.nodes, mesh_init.cells, u_exact_0, mesh_adapted.nodes, mesh_adapted.cells
-    )
-    e_p1_1, _ = compute_continuous_errors(mesh_adapted, u_p1_1, pde, 0.0)
-    e_l2_1, _ = compute_continuous_errors(mesh_adapted, u_l2_1, pde, 0.0)
-    print(f"Dopo 1 Remap  -> Errore P1: {e_p1_1*100:.4f}% | Errore L2: {e_l2_1*100:.4f}%")
-
-    # B) 10 cicli alternati (mesh_init <-> mesh_adapted) come avviene in 10 adattamenti
-    u_p1_loop = u_exact_0.copy()
-    u_l2_loop = u_exact_0.copy()
-    for _ in range(5):
-        u_p1_loop = remap_p1_solution(
-            mesh_init.nodes, mesh_init.cells, u_p1_loop, mesh_adapted.nodes
-        )
-        u_p1_loop = remap_p1_solution(
-            mesh_adapted.nodes, mesh_adapted.cells, u_p1_loop, mesh_init.nodes
-        )
-
-        u_l2_loop = remap_l2_projection(
-            mesh_init.nodes, mesh_init.cells, u_l2_loop, mesh_adapted.nodes, mesh_adapted.cells
-        )
-        u_l2_loop = remap_l2_projection(
-            mesh_adapted.nodes, mesh_adapted.cells, u_l2_loop, mesh_init.nodes, mesh_init.cells
-        )
-
-    e_p1_10, _ = compute_continuous_errors(mesh_init, u_p1_loop, pde, 0.0)
-    e_l2_10, _ = compute_continuous_errors(mesh_init, u_l2_loop, pde, 0.0)
-    print(f"Dopo 10 Remap -> Errore P1: {e_p1_10*100:.4f}% | Errore L2: {e_l2_10*100:.4f}%")
-    print(f"Picco massimo soluzione -> Esatto: {u_exact_0.max():.4f} | P1: {u_p1_loop.max():.4f} | L2: {u_l2_loop.max():.4f}")
-
-    # -------------------------------------------------------------------------
-    # TEST 2: Cosa succede se adattiamo a t=0 con SOLUZIONE ESATTA su nuova mesh
-    # e poi evolviamo con FEM? (Isola il guadagno geometrico della mesh GNN)
-    # -------------------------------------------------------------------------
-    print("\n" + "=" * 75)
-    print("DIAGNOSTICA 2: EVOLUZIONE DINAMICA (dt=0.005, 100 step) CON DIVERSI TRASFERIMENTI")
-    print("=" * 75)
-
-    dt = 0.005
-    n_steps = 100
-
-    for mode_label in ["FIXED", "GDM_P1_REMAP", "GDM_L2_REMAP", "GDM_EXACT_REINIT"]:
-        curr_mesh = create_initial_mesh_2d(domain, nx=32, ny=32)
-        u_curr = pde.evaluate_solution(curr_mesh.nodes[:, 0], curr_mesh.nodes[:, 1], 0.0)
-        solver = ConvectionDiffusionFEM2D(curr_mesh, pde)
-
-        for step in range(1, n_steps + 1):
-            t_curr = (step - 1) * dt
-            t_next = step * dt
-
-            if mode_label != "FIXED" and step % 10 == 0:
-                grad_u = compute_field_gradients(curr_mesh, u_curr, pde, t_curr, gradient_mode="fem")
-                pred = engine.predict(curr_mesh, u_curr, grad_u)
-                new_mesh = pred["adapted_mesh"]
-
-                if mode_label == "GDM_P1_REMAP":
-                    u_curr = remap_p1_solution(
-                        curr_mesh.nodes, curr_mesh.cells, u_curr, new_mesh.nodes
-                    )
-                elif mode_label == "GDM_L2_REMAP":
-                    u_curr = remap_l2_projection(
-                        curr_mesh.nodes, curr_mesh.cells, u_curr, new_mesh.nodes, new_mesh.cells
-                    )
-                elif mode_label == "GDM_EXACT_REINIT":
-                    # Caso ideale senza errore di trasferimento
-                    u_curr = pde.evaluate_solution(new_mesh.nodes[:, 0], new_mesh.nodes[:, 1], t_curr)
-
-                b_nodes = np.asarray(new_mesh.boundary_nodes, dtype=np.int64)
-                u_curr[b_nodes] = pde.evaluate_solution(
-                    new_mesh.nodes[b_nodes, 0], new_mesh.nodes[b_nodes, 1], t_curr
-                )
-                curr_mesh = new_mesh
-                solver = ConvectionDiffusionFEM2D(curr_mesh, pde)
-
-            u_curr = solver.step_backward_euler(u_curr, dt=dt, t_next=t_next)
-
-        final_l2, final_h1 = compute_continuous_errors(curr_mesh, u_curr, pde, n_steps * dt)
-        print(f"Configurazione {mode_label:<18} -> Final L2: {final_l2*100:.2f}% | Final H1: {final_h1*100:.2f}%")
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--targets", default="results/stage_c/raw_metrics/stage_c_replay_targets.npz")
+    parser.add_argument("--output-dir", default="results/stage_c/transfer_diagnostic")
+    args = parser.parse_args()
+    run_diagnostic(args.config, args.targets, args.output_dir)
 
 
 if __name__ == "__main__":
-    run_diagnostic()
+    main()
