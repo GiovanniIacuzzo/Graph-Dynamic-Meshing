@@ -1,154 +1,146 @@
 \documentclass[10pt,a4paper,twocolumn]{article}
 
-% --- Geometria della Pagina e Layout ---
-\usepackage[top=2.0cm,bottom=2.0cm,left=1.8cm,right=1.8cm,columnsep=0.65cm]{geometry}
-
-% --- Codifica, Font e Microtipografia ---
+% ------------------------------------------------------------------
+% Impostazione editoriale
+% ------------------------------------------------------------------
+\usepackage[top=1.85cm,bottom=1.9cm,left=1.72cm,right=1.72cm,columnsep=0.62cm]{geometry}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{mathptmx}
+\usepackage[italian]{babel}
+\usepackage{amsthm}
+\usepackage{newtxtext,newtxmath}
 \usepackage{microtype}
-
-% --- Pacchetti Matematici Avanzati ---
-\usepackage{amsmath,amssymb,amsfonts,amsthm}
-\usepackage{mathtools}
-\usepackage{bm}
-
-% --- Tabelle e Figure ---
-\usepackage{booktabs}
-\usepackage{tabularx}
-\usepackage{multirow}
+\usepackage{amsmath,mathtools,bm}
+\usepackage{booktabs,tabularx,multirow,array}
 \usepackage{graphicx}
+\usepackage{caption}
 \usepackage{subcaption}
 \usepackage{float}
-
-% --- Algoritmi ---
-\usepackage{algorithm}
-\usepackage{algorithmic}
-
-% --- Collegamenti Ipertestuali e Riferimenti ---
+\usepackage{placeins}
+\usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
-\usepackage[colorlinks=true,
-            linkcolor=blue!70!black,
-            citecolor=blue!70!black,
-            urlcolor=blue!70!black,
-            pdfencoding=auto,
-            psdextra]{hyperref}
+\usepackage[colorlinks=true,linkcolor=blue!55!black,citecolor=blue!55!black,urlcolor=blue!55!black]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\hypersetup{pdftitle={Adattività dinamica di mesh guidata da reti neurali su grafi per PDE transitorie},pdfauthor={Giovanni Giuseppe Iacuzzo},pdfsubject={Seconda bozza scientifica GDM}}
 
-% --- Ambienti Matematici Teorema / Definizione ---
-\newtheorem{theorem}{Theorem}[section]
-\newtheorem{lemma}[theorem]{Lemma}
-\newtheorem{definition}[theorem]{Definition}
-\newtheorem{remark}[theorem]{Remark}
+\graphicspath{{images/}{images/stage_a/}{images/stage_b/}{images/stage_c/}{images/stage_d/}{images/appendix/}}
 
-% --- Titolo e Autori ---
-\title{\textbf{\Large Graph Dynamic Meshing (GDM): A Conservative and Safety-Guaranteed Neural Adaptive Mesh Framework for Transient Convection-Diffusion PDEs}}
+\setlength{\parskip}{0.12em}
+\setlength{\parindent}{1em}
+\setlist[itemize]{leftmargin=1.2em,itemsep=0.15em,topsep=0.2em}
+\setlist[enumerate]{leftmargin=1.35em,itemsep=0.2em,topsep=0.2em}
+\captionsetup{font=small,labelfont=bf}
+\renewcommand{\arraystretch}{1.12}
+\allowdisplaybreaks
 
+\newtheorem{definition}{Definizione}
+\newtheorem{proposition}{Proposizione}
+\newtheorem{remark}{Osservazione}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\OmegaD}{\Omega}
+\newcommand{\Th}{\mathcal{T}_h}
+\newcommand{\Vh}{V_h}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left\lvert #1 \right\rvert}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\GDM}{\textsc{GDM}}
+\newcommand{\FEM}{\textsc{FEM}}
+\newcommand{\GNN}{\textsc{GNN}}
+\newcommand{\ALE}{\textsc{ALE}}
+\newcommand{\DGC}{\textsc{D-GCL}}
+\newcommand{\Pone}{$P_1$}
+\newcommand{\Ltwo}{$L^2$}
+
+\newcommand{\gdmfigure}[4][1.0\linewidth]{%
+\begin{figure}[H]
+\centering
+\IfFileExists{#2}{\includegraphics[width=#1,keepaspectratio]{#2}}{%
+\fbox{\begin{minipage}[c][0.17\textheight][c]{1.0\linewidth}
+\centering\small\textbf{Figura non ancora copiata}\\[0.5em]
+\footnotesize Copiare il PDF indicato in \texttt{FIGURE\_MAP.md}.
+\end{minipage}}}
+\caption{#3}\label{#4}
+\end{figure}}
+\newcommand{\gdmfigurewide}[4][0.7\textwidth]{%
+\begin{figure*}[!htbp]
+\centering
+\IfFileExists{#2}{\includegraphics[width=#1,keepaspectratio]{#2}}{%
+\fbox{\begin{minipage}[c][0.14\textheight][c]{0.7\textwidth}
+\centering\small\textbf{Figura non ancora copiata}\\[0.5em]
+\footnotesize Copiare il PDF indicato in \texttt{FIGURE\_MAP.md}.
+\end{minipage}}}
+\caption{#3}\label{#4}
+\end{figure*}}
+
+\title{\bfseries Adattività dinamica di mesh guidata da reti neurali su grafi per PDE transitorie\\[0.35em]
+\large Un framework di rilocazione nodale con filtro geometrico deterministico e integrazione ALE}
 \author{
-  \textbf{Giovanni Giuseppe Iacuzzo}\textsuperscript{1,*} \\
-  \small \textsuperscript{1}Department of Engineering and Architecture, University of Enna "Kore", Enna, Italy \\
-  \small \textsuperscript{*}Corresponding author: \texttt{giovanni.iacuzzo@unikore.it}
+Giovanni Giuseppe Iacuzzo\\
+\small Dipartimento di Ingegneria e Architettura, Università degli Studi di Enna ``Kore'', Enna, Italia\\
+\small \texttt{giovanni.iacuzzo@unikore.it}
 }
 
-\date{\today}
 
-% -------------------------------------------------------------
-% INIZIO DOCUMENTO
-% -------------------------------------------------------------
 \begin{document}
-
 \maketitle
 
-% --- Abstract ---
 \begin{abstract}
-\noindent
-% Sintesi sintetica: contesto del problema (mesh r-adaptation e FEM transiente),
-% limiti dei metodi correnti (costo dell'ottimizzazione variazionale runtime,
-% degradazione da remapping pointwise, instabilità geometrica / inversioni di celle),
-% framework proposto (GDM: GNN + filtro analitico di non-inversione + formulazione ALE D-GCL conforme),
-% principali risultati quantitativi (speedup rispetto a ottimizzatori classici, conservazione massa/GCL, accuratezza PDE).
-L'adattività geometrica di griglia mediante spostamento nodale a topologia costante ($r$-refinement) rappresenta una metodologia cruciale per catturare gradienti localizzati e fronti mobili nelle discretizzazioni ad elementi finiti (FEM) di equazioni alle derivate parziali (PDE) transienti. Tuttavia, l'applicazione dei metodi classici basati su ottimizzazione variazionale in simulazioni dinamiche instazionarie è fortemente limitata dall'elevato costo computazionale per time-step, dal rischio intrinseco di inversione geometrica degli elementi e dal degrado numerico causato dagli operatori convenzionali di trasferimento di stato (remapping pointwise), i quali introducono dissipazione artificiale e violano la conservazione della massa. 
+La rilocazione adattiva dei nodi di una mesh (\emph{$r$-adaptation}) consente di redistribuire i gradi di libertà esistenti in prossimità di strutture spaziali localizzate, senza modificare il numero di nodi o la connettività della discretizzazione. Nei problemi evolutivi, tuttavia, la qualità di una strategia di movimento non può essere giudicata soltanto attraverso un funzionale geometrico o di interpolazione: occorre considerare anche il trasferimento dello stato discreto, la validità degli elementi lungo il moto, la compatibilità geometrico-temporale della formulazione e l'errore della soluzione della PDE. Questo lavoro presenta \emph{Graph Dynamic Meshing} (\GDM), un framework per la rilocazione nodale bidimensionale che combina una rete neurale su grafi, un filtro deterministico di sicurezza geometrica e un solutore agli elementi finiti nativo basato su C++/deal.II. La mesh mantiene la propria topologia; il movimento viene applicato mediante una traiettoria nodale controllata e, nella campagna principale, accoppiato a una formulazione Arbitrary Lagrangian--Eulerian (\ALE) senza remapping esplicito dello stato.
 
-In questo lavoro introduciamo \textit{Graph Dynamic Meshing} (GDM), un framework ibrido neurale e differenziale per l'adattività dinamica di griglie bidimensionali non strutturate privo di remapping esplicito. Il framework combina: (i) una rete neurale su grafi (GNN) strutturata secondo un paradigma Encode-Process-Decode operante su feature fisiche nodali; (ii) un filtro di sicurezza analitico e deterministico a complessità $\mathcal{O}(M)$, che garantisce incondizionatamente un determinante Jacobiano strettamente positivo ($\min_{t,e} J_e \geq \epsilon$) prevenendo il collasso degli elementi; (iii) una formulazione differenziale continua Arbitrary Lagrangian-Eulerian (ALE) rigorosamente conforme alla Discrete Geometric Conservation Law (D-GCL). 
-
-La validazione numerica, condotta su problemi di convezione--diffusione instazionaria 2D con soluzione manufatta, dimostra che la formulazione continua proposta soddisfa esattamente la D-GCL, preserva campi uniformi ($\sim 10^{-14}$) e conserva la massa discreta globale ($\sim 10^{-16}$) a precisione di macchina, azzerando interamente il costo di trasferimento dello stato. L'inferenza GNN accoppiata al filtro geometrico abbatte di oltre un ordine di grandezza ($>40\times$) il tempo di generazione della griglia rispetto all'ottimizzazione variazionale L-BFGS-B, mentre nel benchmark dinamico completo la pipeline GDM--ALE raggiunge un'accuratezza PDE pienamente comparabile alla proiezione variazionale $L^2$ con uno speedup computazionale complessivo di $5.6\times$.
-% \textit{Abstract placeholder: contesto, problema aperto, metodologia proposta (GDM), proprietà teoriche (D-GCL, invariabilità topologica, safety filter), risultati chiave e speedup computazionale.}
+La metodologia è valutata attraverso campagne progressive. La prima campagna studia la predizione di spostamenti per campi gaussiani e utilizza riferimenti numerici a budget finito, non ottimi certificati. Le campagne successive isolano il comportamento dei trasferimenti $P_1$ e $L^2$ e verificano il solutore ALE e la \emph{Discrete Geometric Conservation Law} (\DGC). La valutazione end-to-end principale considera 28 casi held-out di un problema transiente di convezione--diffusione con soluzione manufatta, distinti in 12 casi interpolativi e 16 estrapolativi. Rispetto alla mesh fissa, la pipeline \GDM{} trajectory-aware riduce l'errore relativo medio integrato in norma $L^2$ dell'8,04\% (IC bootstrap appaiato al 95\%: 7,59--8,51\%) e l'errore finale dell'8,26\% (7,54--9,05\%); il miglioramento in norma $L^2$ si osserva in tutti i 28 casi. Il costo computazionale mediano è tuttavia circa 8,11 volte quello della soluzione su mesh fissa e il filtro geometrico interviene nel 75,4\% delle finestre di adattamento. I risultati forniscono quindi evidenza favorevole, ma circoscritta, sull'accuratezza della pipeline trajectory-aware per la famiglia di problemi considerata; non dimostrano un vantaggio computazionale né una generalizzazione a PDE, geometrie o risoluzioni differenti.
 \end{abstract}
 
+\vspace{0.2em}
+\noindent\textbf{Parole chiave:} $r$-adattività; rilocazione di mesh; reti neurali su grafi; elementi finiti; ALE; legge geometrica di conservazione discreta; convezione--diffusione.
 
-\vspace{0.5em}
-\noindent\textbf{Keywords:} Adaptive Mesh Refinement, $r$-adaptation, Graph Neural Networks, Arbitrary Lagrangian-Eulerian (ALE), Geometric Conservation Law, Finite Element Method.
-\newpage
+\section{Introduzione}
+\label{sec:introduzione}
+\input{sections/01_introduzione.tex}
 
-% =============================================================
-% 1. INTRODUZIONE
-% =============================================================
-\section{Introduction}
-\label{sec:introduction}
-\input{sections/01_introduction.tex}
+\section{Problema modello e discretizzazione numerica}
+\label{sec:problema}
+\input{sections/02_problema.tex}
 
-% =============================================================
-% 2. MODELLO MATEMATICO E METODI NUMERICI
-% =============================================================
-\section{Mathematical Formulation and Numerical Discretization}
-\label{sec:formulation}
-\input{sections/02_formulation.tex}
+\section{Il framework Graph Dynamic Meshing}
+\label{sec:framework}
+\input{sections/03_framework.tex}
 
-% =============================================================
-% 3. FRAMEWORK GRAPH DYNAMIC MESHING (GDM)
-% =============================================================
-\section{The Graph Dynamic Meshing Framework}
-\label{sec:gdm_framework}
-\input{sections/03_gdm_framework.tex}
+\section{Movimento della mesh, trasferimento dello stato e formulazione ALE}
+\label{sec:ale}
+\input{sections/04_ale.tex}
 
-% =============================================================
-% 4. DALLO STATE TRANSFER AD ALE E D-GCL
-% =============================================================
-\section{From State Transfer Operators to ALE Formulation}
-\label{sec:ale_dgcl}
-\input{sections/04_ale_dgcl.tex}
+\section{Disegno sperimentale e protocollo di valutazione}
+\label{sec:protocollo}
+\input{sections/05_protocollo.tex}
 
-% =============================================================
-% 5. VALIDAZIONE METODOLOGICA E NUMERICA
-% =============================================================
-\section{Numerical Verification and Component Diagnostics}
-\label{sec:diagnostics}
-\input{sections/05_diagnostics.tex}
+\section{Risultati delle campagne preliminari: Stage A--C}
+\label{sec:stageabc}
+\input{sections/06_stage_abc.tex}
 
-% =============================================================
-% 6. RISULTATI DINAMICI E BENCHMARK COMPARATIVO
-% =============================================================
-\section{Final Dynamic Benchmark and Comparative Results}
-\label{sec:dynamic_benchmark}
-\input{sections/06_dynamic_benchmark.tex}
+\section{Valutazione end-to-end trajectory-aware: Stage D}
+\label{sec:staged}
+\input{sections/07_stage_d.tex}
 
-% =============================================================
-% 7. DISCUSSIONE E LIMITAZIONI
-% =============================================================
-\section{Discussion}
-\label{sec:discussion}
-\input{sections/07_discussion.tex}
-\newpage
+\section{Discussione, limiti e implicazioni}
+\label{sec:discussione}
+\input{sections/08_discussione.tex}
 
-% =============================================================
-% 8. CONCLUSIONI E SVILUPPI FUTURI
-% =============================================================
-\section{Conclusions and Future Work}
-\label{sec:conclusions}
-\input{sections/08_conclusions.tex}
-\newpage
+\section{Conclusioni}
+\label{sec:conclusioni}
+\input{sections/09_conclusioni.tex}
 
-% =============================================================
-% RINGRAZIAMENTI
-% =============================================================
-\section*{Acknowledgments}
-% Ringraziamenti istituzionali, progetti di ricerca, supporto finanziario o risorse di calcolo.
-
-% =============================================================
-% BIBLIOGRAFIA
-% =============================================================
-\bibliographystyle{unsrtnat}
+\bibliographystyle{plainnat}
+\renewcommand{\refname}{Bibliografia}
 \bibliography{references}
+
+\clearpage
+\appendix
+\input{appendices/A_oracolo.tex}
+\input{appendices/B_architettura_training.tex}
+\input{appendices/C_remapping_stagebc.tex}
+\input{appendices/D_diagnostiche_staged.tex}
+\input{appendices/E_self_supervised.tex}
 
 \end{document}

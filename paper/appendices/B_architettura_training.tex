@@ -1,0 +1,46 @@
+\section{Dettagli architetturali e di addestramento}
+\label{app:architettura}
+
+\subsection{Feature e rete}
+
+La GNN utilizzata per il benchmark PDE riceve sei feature nodali e tre feature di arco, come definite nelle \cref{eq:node_features,eq:edge_features}. Entrambi i modelli supervisionati Stage A e Stage D utilizzano dimensione latente 128, sei passaggi di message passing e MLP a due strati. L'uscita è un vettore di spostamento in $\R^2$ per nodo. Le coordinate dei nodi di bordo sono mantenute vincolate.
+
+La loss supervisionata è la somma del termine quadratico sugli spostamenti interni e di un termine geometrico di barriera. Nella configurazione Stage A e Stage D il peso del target è 1, quello della barriera è $10^{-4}$ e il termine di smoothing è nullo. Tale loss agisce durante il training; l'ammissibilità della mesh a runtime è verificata separatamente dal filtro deterministico.
+
+\subsection{Configurazioni di addestramento}
+
+\begin{table}[tbp]
+\centering
+\footnotesize
+\caption{Configurazioni essenziali dei modelli supervisionati.}
+\label{tab:app_training_configs}
+\begin{tabular}{lcc}
+\toprule
+Parametro & Stage A & Stage D\\
+\midrule
+Campioni training & 120 & 48\\
+Validation & 30 & 12\\
+Epoche & 150 & 120\\
+Batch size & 8 & 8\\
+Learning rate iniziale & $10^{-3}$ & $10^{-3}$\\
+Weight decay & $10^{-5}$ & $10^{-5}$\\
+Dimensione latente & 128 & 128\\
+Message passing & 6 & 6\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per Stage A la minima validation loss è $8.53\times10^{-5}$ all'epoca 149, con errore relativo di spostamento pari a 89.11\%. Per Stage D il checkpoint selezionato è all'epoca 111; la validation target loss riportata nel log è $2.431\times10^{-5}$, l'errore relativo di spostamento è 79.43\% e il rapporto tra norma dello spostamento predetto e target è circa 0.62. Il file \texttt{training\_history.json} di Stage D non contiene lo storico serializzato, pertanto le affermazioni quantitative sul training sono limitate ai valori registrati nel log e alle informazioni del checkpoint. Non viene ricostruita una curva d'addestramento a partire da valori non disponibili.
+
+\gdmfigure{images/appendix/training_loss.pdf}{Loss di training e validation per il modello Stage A.}{fig:app_training_loss}
+\gdmfigure{images/appendix/validation_displacement_error.pdf}{Errore relativo di spostamento in validation per il modello Stage A.}{fig:app_validation_displacement}
+\gdmfigure{images/appendix/learning_rate.pdf}{Schedulazione del learning rate durante l'addestramento Stage A.}{fig:app_learning_rate}
+
+\subsection{Ramo self-supervised pathwise-safety: esperimento esplorativo}
+
+È stato inoltre condotto un esperimento separato self-supervised, identificato come \texttt{v3\_pathwise\_safety}. Tale ramo utilizza una configurazione e un checkpoint differenti dal modello trajectory-aware supervisionato valutato nella campagna PDE principale. Sul test interpolativo la riduzione media dell'obiettivo rispetto alla mesh fissa è 61.47\%; sul test estrapolativo è 56.65\%. Il filtro interviene rispettivamente nel 50.0\% e nel 46.88\% dei campioni. Tutti i campioni riportati risultano privi di celle invertite o degeneri dopo il filtro.
+
+Questi dati misurano l'obiettivo pathwise di mesh e la sicurezza geometrica; non è stato fornito un benchmark di integrazione PDE transiente per questo checkpoint. L'esperimento viene quindi incluso come ramo esplorativo e non viene aggregato né confrontato direttamente con i risultati PDE Stage D.
+
+\gdmfigure{images/appendix/stage_d_training_objectives.pdf}{Curve dell'obiettivo durante l'esperimento self-supervised pathwise-safety.}{fig:app_selfsup_objectives}
+\gdmfigure{images/appendix/stage_d_validation_safety.pdf}{Diagnostica di sicurezza geometrica del ramo self-supervised pathwise-safety.}{fig:app_selfsup_safety}

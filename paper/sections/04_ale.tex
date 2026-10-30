@@ -1,0 +1,104 @@
+\subsection{Il problema del trasferimento dello stato}
+
+Siano $\mathcal T_h^n$ e $\mathcal T_h^{n+1}$ due triangolazioni con la stessa connettività ma coordinate nodali differenti, e siano $V_h^n$ e $V_h^{n+1}$ i corrispondenti spazi $P_1$. In generale, $V_h^n\neq V_h^{n+1}$: una rilocazione istantanea della mesh richiede quindi di trasferire lo stato $u_h^n$ nel nuovo spazio discreto. Due operatori sono stati implementati e confrontati come diagnostica, in accordo con la letteratura sul trasferimento conservativo tra mesh \citep{zzhang2006moving,alauzet2010p1}.
+
+\subsection{Trasferimento puntuale \texorpdfstring{$P_1$}{P1}}
+
+Il remapping puntuale valuta la funzione lineare definita sulla vecchia mesh nei nodi della nuova mesh. Se il nuovo nodo $\bm x_i^{n+1}$ appartiene all'elemento $K_e^n$ con coordinate baricentriche $\lambda_{e,a}$, il valore trasferito è
+\begin{equation}
+U_i^{n+1}=
+u_h^n(\bm x_i^{n+1})
+=\sum_{a=1}^{3}\lambda_{e,a}(\bm x_i^{n+1})U_{e,a}^n.
+\label{eq:p1_remap}
+\end{equation}
+L'operatore è locale e relativamente economico, ma non coincide in generale con un'identità tra gli spazi discreti. La sua applicazione ripetuta può introdurre errori di rappresentazione e modificare l'integrale del campo.
+
+\subsection{Proiezione variazionale \texorpdfstring{$L^2$}{L2}}
+
+Una seconda possibilità definisce $u_h^{n+1}\in V_h^{n+1}$ imponendo
+\begin{equation}
+\int_\Omega v_h^{n+1}u_h^{n+1}\,d\bm x
+=
+\int_\Omega v_h^{n+1}u_h^n\,d\bm x
+\qquad \forall v_h^{n+1}\in V_h^{n+1}.
+\label{eq:l2_projection}
+\end{equation}
+In forma matriciale:
+\begin{equation}
+M^{n+1}\bm U^{n+1}=\bm b^{n\rightarrow n+1},
+\end{equation}
+con $M_{ij}^{n+1}=(\phi_j^{n+1},\phi_i^{n+1})_\Omega$ e
+$b_i^{n\rightarrow n+1}=(u_h^n,\phi_i^{n+1})_\Omega$. Se la base di prova soddisfa la partizione dell'unità e gli integrali sono valutati esattamente sullo stesso dominio, scegliendo come funzione test la costante unitaria si ottiene l'identità
+\begin{equation}
+\int_\Omega u_h^{n+1}\,d\bm x=\int_\Omega u_h^n\,d\bm x.
+\label{eq:l2_integral}
+\end{equation}
+Questa proprietà riguarda il trasferimento $L^2$ idealizzato; in un calcolo numerico la sua accuratezza dipende da quadratura, localizzazione geometrica e soluzione del sistema.
+
+\subsection{Formulazione Arbitrary Lagrangian--Eulerian}
+
+Nella campagna principale il movimento non viene applicato come salto istantaneo seguito da un remapping. Si introduce una mappa di coordinate
+\begin{equation}
+\bm x=\bm\chi(\widehat{\bm x},t),\qquad
+\bm w(\widehat{\bm x},t)=
+\left.\frac{\partial\bm\chi}{\partial t}\right|_{\widehat{\bm x}},
+\label{eq:ale_map}
+\end{equation}
+dove $\widehat{\bm x}$ è la coordinata di riferimento e $\bm w$ la velocità della mesh. Per una funzione sufficientemente regolare, la regola della catena dà
+\begin{equation}
+\left.\partial_tu\right|_{\widehat{\bm x}}
+=
+\left.\partial_tu\right|_{\bm x}+\bm w\cdot\nabla u.
+\label{eq:ale_chain}
+\end{equation}
+La PDE \eqref{eq:pde} può pertanto essere espressa, nella descrizione mobile, come
+\begin{equation}
+\left.\partial_tu\right|_{\widehat{\bm x}}
++(\bm b-\bm w)\cdot\nabla u
+-\nu\Delta u=f.
+\label{eq:ale_strong}
+\end{equation}
+La formulazione discreta opera con una matrice di massa dipendente dal tempo e con i contributi convettivi relativi alla velocità fisica e alla velocità della griglia. La variazione della geometria è trattata all'interno del passo ALE; non viene applicato un operatore separato di remapping dello stato nella pipeline Stage D.
+
+Per esplicitare l'operatore effettivamente assemblato, si indichino con $M^n$ e $M^{n+1}$ le matrici di massa sulle configurazioni ai due estremi del passo, con $C_{\mathrm{phys}}^{n+1}$ il contributo convettivo fisico, con $K^{n+1}$ quello diffusivo e con $F^{n+1}$ il vettore di forzante. Il contributo cinematico della mesh è assemblato alla configurazione intermedia e definito da
+\begin{equation}
+C_{\mathrm{mesh}}^{n+1/2}
+=-C_{\mathrm{adv}}^{w,n+1/2}-M_{\mathrm{div}w}^{n+1/2},
+\label{eq:ale_mesh_operator}
+\end{equation}
+dove, schematicamente, $(C_{\mathrm{adv}}^{w})_{ij}=\int_{\Omega^{n+1/2}}\varphi_i\,\bm w\cdot\nabla\varphi_j\,d\bm x$ e $(M_{\mathrm{div}w})_{ij}=\int_{\Omega^{n+1/2}}\varphi_i\varphi_j\nabla\cdot\bm w\,d\bm x$. Il passo backward Euler implementato è quindi rappresentabile come
+\begin{equation}
+\begin{aligned}
+\left[\Delta t^{-1}M^{n+1}
++C_{\mathrm{mesh}}^{n+1/2}
++C_{\mathrm{phys}}^{n+1}+K^{n+1}\right]\bm U^{n+1}
+&=\Delta t^{-1}M^n\bm U^n\\
+&\quad+\bm F^{n+1}.
+\end{aligned}
+\label{eq:ale_discrete_step}
+\end{equation}
+con imposizione forte delle condizioni di Dirichlet sui gradi di libertà di bordo. La scrittura distingue l'operatore cinematico, valutato a metà passo, dai termini fisici assemblati sulla configurazione finale; non implica che tutti i contributi siano valutati a un unico tempo intermedio.
+
+\paragraph{Interpolazione temporale del movimento.}
+A ogni finestra di adattamento, di ampiezza $H_a=10\Delta t=0.05$, la GNN propone uno spostamento e il filtro restituisce lo spostamento ammissibile $\Delta\bm X_{\mathrm{safe}}$. Tale spostamento viene distribuito linearmente sui dieci passi della finestra. La velocità di mesh è quindi costante a tratti:
+\begin{equation}
+\bm w=\frac{\Delta\bm X_{\mathrm{safe}}}{H_a}.
+\label{eq:mesh_velocity}
+\end{equation}
+La topologia resta invariata; il solutore ALE nativo aggiorna la geometria e risolve il sistema FEM nel dominio mobile.
+
+\subsection{Legge geometrica di conservazione discreta}
+
+La \emph{Discrete Geometric Conservation Law} (\DGC) esprime la compatibilità tra variazione della geometria della mesh e discretizzazione temporale. In una formulazione ALE, la matrice di massa e gli operatori dipendono dalla configurazione; il termine associato alla velocità di mesh deve essere coerente con tale dipendenza. Una verifica fondamentale consiste nella preservazione del campo costante quando l'evoluzione è ridotta al solo trasporto geometrico, senza dinamica fisica che ne modifichi il valore \citep{farhat2001the,guillard2000on,formaggia2004stability}.
+
+Nel presente lavoro la verifica è effettuata attraverso test di free-stream e residui geometrici algebrici ed element-wise. Nel benchmark Stage D i massimi residui riportati sono rispettivamente
+\begin{equation}
+R_{\mathrm{GCL,alg}}^\infty=1.97\times10^{-16},
+\qquad
+R_{\mathrm{GCL,elem}}^{\max}=4.70\times10^{-17}.
+\end{equation}
+Questi valori documentano la coerenza geometrica del test implementato alla precisione numerica osservata. Non implicano, da soli, la conservazione della massa fisica per la PDE forzata con condizioni di Dirichlet dipendenti dal tempo. Nel seguito viene distinta la D-GCL dalla discrepanza degli incrementi di massa rispetto alla soluzione di riferimento.
+
+\subsection{Implementazione numerica}
+
+Il nucleo numerico è implementato in C++20 con deal.II, utilizzando le strutture di triangolazione, gli spazi agli elementi finiti, gli oggetti di integrazione e le matrici/solutori lineari della libreria \citep{arndt2021dealii}. I binding pybind11 espongono le funzionalità native a Python. La GNN, la gestione dei dataset e l'orchestrazione restano in Python. Le formule geometriche del filtro e alcuni assemblaggi ALE/remapping sono implementati direttamente nel core C++; non si attribuisce quindi a deal.II l'implementazione di ogni singolo kernel. L'architettura evita duplicazioni Python per le operazioni di mesh e FEM.

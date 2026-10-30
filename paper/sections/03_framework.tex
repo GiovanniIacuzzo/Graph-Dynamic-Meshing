@@ -1,0 +1,94 @@
+\subsection{Rappresentazione della mesh mediante un grafo}
+
+La triangolazione $\mathcal T_h$ viene rappresentata mediante un grafo $\mathcal G=(\mathcal V,\mathcal E)$. Ciascun nodo della mesh corrisponde a un vertice del grafo; due vertici sono connessi quando i nodi corrispondenti appartengono allo stesso elemento triangolare. Gli archi sono trattati in entrambe le direzioni. La rappresentazione segue il paradigma delle reti neurali su grafi e dei simulatori graph-based \citep{battaglia2018relational,pfaff2021learning}. La connettività è costruita dalla mesh corrente, mentre le feature geometriche vengono aggiornate a ogni finestra di adattamento.
+
+L'inferenza dei modelli usati nel benchmark PDE riceve sei feature nodali:
+\begin{equation}
+\bm z_i=
+\left[
+x_i,\ y_i,\ \widetilde u_i,\ 
+\widetilde{\partial_xu}_i,\ 
+\widetilde{\partial_yu}_i,\ 
+\chi_{\partial\Omega}(i)
+\right]^T,
+\label{eq:node_features}
+\end{equation}
+dove $\widetilde u_i$ e le derivate discrete sono le quantità scalate secondo l'adattatore di feature effettivamente impiegato, e $\chi_{\partial\Omega}$ identifica i nodi vincolati sul bordo. Per ogni arco orientato $(i,j)$ sono utilizzate tre feature:
+\begin{equation}
+\bm e_{ij}=
+[x_j-x_i,\ y_j-y_i,\ \norm{\bm x_j-\bm x_i}_2]^T.
+\label{eq:edge_features}
+\end{equation}
+Le derivate del campo sono ricavate dalla soluzione FEM corrente. Non vengono forniti alla rete né la soluzione manufatta esatta, né stati temporali futuri, né gli spostamenti target dell'oracolo, né i parametri fisici $(\sigma,\beta,\bm b,\nu)$ come feature esplicite. Questa scelta definisce il perimetro informativo della GNN e rende il modello dipendente dallo stato numerico corrente, non da informazioni a posteriori.
+
+\subsection{Architettura della rete MeshMover}
+
+La rete segue uno schema \emph{encode--process--decode}. Gli encoder trasformano feature nodali e di arco in rappresentazioni latenti; una successione di sei blocchi di message passing aggrega informazioni dai vicini; il decoder produce, per ciascun nodo, uno spostamento bidimensionale:
+\begin{equation}
+\widehat{\Delta\bm x}_i
+=
+\mathcal G_\theta(\mathcal G,\bm Z)_i
+\in\R^2.
+\label{eq:gnn_output}
+\end{equation}
+Le configurazioni Stage A e Stage D utilizzano una dimensione latente pari a 128 e MLP a due strati. La rete è condivisa sui nodi e non modifica la connettività della triangolazione. Gli spostamenti dei nodi di bordo sono annullati o vincolati a zero dall'adattatore di inferenza, in modo da mantenere la geometria del bordo.
+
+\subsection{Due strategie di apprendimento}
+
+\paragraph{Stage A: apprendimento supervisionato su campi gaussiani.}
+La prima strategia costruisce target di rilocazione minimizzando un funzionale associato all'errore d'interpolazione di campi gaussiani localizzati, con penalità di spostamento e di qualità geometrica. Il modello apprende una mappa dalla mesh e dalle feature del campo agli spostamenti di riferimento. Il dataset contiene 210 campioni: 120 per training, 30 per validation, 30 per test interpolativo e 30 per test estrapolativo.
+
+I target Stage A sono riferimenti numerici a budget finito. La loro accettazione è determinata da criteri di riduzione del funzionale e dell'errore d'interpolazione e dalla validità geometrica; non equivale alla certificazione di un punto stazionario dell'ottimizzazione. Nell'insieme di 210 campioni, 90 ottimizzazioni raggiungono il limite di iterazioni e nessun campione è classificato come stazionario secondo la soglia sul gradiente proiettato. Nel testo tali dati sono quindi denominati \emph{riferimenti a budget finito accettati per qualità}, non mesh ottime.
+
+\paragraph{Stage D: apprendimento trajectory-aware su finestre temporali.}
+La seconda strategia considera una finestra temporale di ampiezza $H=0.05$ e apprende una traiettoria di rilocazione associata all'evoluzione del campo manufatto. Il dataset supervisionato comprende 88 campioni: 48 training, 12 validation, 12 test interpolativi e 16 test estrapolativi. I target sono generati con un budget L-BFGS-B limitato a 120 iterazioni; la configurazione non richiede che siano convergenti né che superino un filtro di accettazione dei target. La valutazione held-out riporta una frazione di successo dell'ottimizzatore pari a zero. Di conseguenza, anche in Stage D gli spostamenti supervisionati sono da interpretare come proposte di riferimento a budget limitato, non come soluzioni ottime certificate.
+
+La loss supervisionata combina errore quadratico sugli spostamenti nodali interni e barriera geometrica:
+\begin{align}
+\mathcal L_{\mathrm{target}}
+&=\frac{1}{N_I}\sum_{i\in\mathcal I}
+\norm{\widehat{\Delta\bm x}_i-\Delta\bm x_i^{\,\mathrm{ref}}}_2^2,\\
+\mathcal L
+&=\lambda_{\mathrm{target}}\mathcal L_{\mathrm{target}}
++\lambda_{\mathrm{barrier}}\mathcal L_{\mathrm{barrier}}.
+\label{eq:training_loss}
+\end{align}
+Nella configurazione Stage D, $\lambda_{\mathrm{target}}=1$ e il peso della barriera è $10^{-4}$; il termine di smoothing è disattivato. La barriera è un regolarizzatore di training e non sostituisce la verifica a runtime.
+
+\subsection{Filtro deterministico di sicurezza geometrica}
+
+La predizione della rete non garantisce, da sola, che la nuova mesh sia ammissibile. Sia $\bm X^n$ la matrice delle coordinate correnti e sia $\Delta\bm X$ lo spostamento proposto. Il filtro considera il percorso lineare
+\begin{equation}
+\bm X(\alpha)=\bm X^n+\alpha\Delta\bm X,\qquad 0\leq\alpha\leq1,
+\label{eq:mesh_path}
+\end{equation}
+con spostamenti nulli sui nodi di bordo. Per un triangolo orientato $K_e=(a,b,c)$, il Jacobiano geometrico (pari al determinante della matrice dei due lati) è
+\begin{equation}
+J_e(\alpha)=
+\det\!\left[
+\bm x_b(\alpha)-\bm x_a(\alpha),\
+\bm x_c(\alpha)-\bm x_a(\alpha)
+\right].
+\end{equation}
+Poiché ciascun lato dipende linearmente da $\alpha$, il determinante è un polinomio quadratico:
+\begin{equation}
+J_e(\alpha)=A_e\alpha^2+B_e\alpha+C_e.
+\label{eq:jacobian_quadratic}
+\end{equation}
+Assumendo che la mesh iniziale soddisfi $J_e(0)>\epsilon$, per ogni elemento si determina il primo attraversamento della soglia $J_e=\epsilon$ lungo il percorso. Il fattore globale è il minimo dei fattori ammissibili:
+\begin{equation}
+\alpha_{\mathrm{safe}}=\min_{e=1,\ldots,M}\alpha_e^\star,
+\qquad
+\bm X^{n+1}=\bm X^n+\alpha_{\mathrm{safe}}\Delta\bm X.
+\label{eq:safety_alpha}
+\end{equation}
+La costruzione è deterministica e richiede una scansione degli elementi, quindi costo lineare nel numero di celle. In aritmetica esatta, sotto le ipotesi di triangoli lineari, percorso nodale lineare e mesh iniziale ammissibile, l'analisi del primo attraversamento controlla il Jacobiano lungo l'intero segmento e non soltanto sul punto finale.
+
+La proprietà matematica non va confusa con una garanzia floating-point assoluta. Nel benchmark è stata osservata una minima discrepanza stretta dalla soglia $\epsilon=10^{-4}$ dell'ordine di $10^{-18}$, compatibile con arrotondamento in doppia precisione; non sono state registrate celle invertite o degeneri dopo il filtro. La soglia, il margine numerico e il criterio per celle degeneri sono mantenuti distinti. Il filtro non viene rimosso nelle valutazioni di accuratezza.
+
+\begin{proposition}[Ammissibilità lungo il percorso in aritmetica esatta]
+Sia $\mathcal T_h$ una triangolazione iniziale con $J_e(0)>\epsilon$ per ogni elemento. Si consideri il percorso \eqref{eq:mesh_path} e si determini, per ciascun elemento, il primo valore $\alpha_e^\star\in(0,1]$ per cui $J_e(\alpha_e^\star)=\epsilon$, ponendo $\alpha_e^\star=1$ se non vi è attraversamento in $[0,1]$. Se il fattore globale è scelto non superiore a $\min_e\alpha_e^\star$ e la ricerca delle radici individua correttamente il primo attraversamento, allora $J_e(\alpha)\geq\epsilon$ per ogni elemento e per ogni $\alpha$ lungo il segmento applicato.
+\end{proposition}
+\begin{proof}
+Per ciascun elemento, per continuità del polinomio quadratico $J_e(\alpha)-\epsilon$, il primo attraversamento partendo da un valore strettamente positivo delimita un intervallo in cui la funzione non è negativa. Scegliendo il minimo dei primi attraversamenti si resta nell'intersezione degli intervalli ammissibili di tutti gli elementi. La conclusione segue in aritmetica esatta. La proposizione non copre errori di arrotondamento, errori nella ricerca numerica delle radici o mesh iniziali non ammissibili.
+\end{proof}

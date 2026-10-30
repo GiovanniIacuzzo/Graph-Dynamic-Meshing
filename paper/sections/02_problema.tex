@@ -1,0 +1,111 @@
+\subsection{Problema di convezione--diffusione transiente}
+
+Sia $\Omega=(0,1)^2\subset\R^2$ e sia $T>0$. Si considera il problema scalare
+\begin{equation}
+\partial_t u+\bm b\cdot\nabla u-\nu\Delta u=f
+\qquad\text{in }\Omega\times(0,T],
+\label{eq:pde}
+\end{equation}
+con velocità convettiva costante $\bm b=(b_x,b_y)^T$, diffusività $\nu>0$, condizione iniziale
+\begin{equation}
+u(\bm x,0)=u_0(\bm x)\qquad \text{in }\Omega,
+\label{eq:initial}
+\end{equation}
+e condizione di Dirichlet
+\begin{equation}
+u(\bm x,t)=g_D(\bm x,t)
+\qquad \text{su }\partial\Omega\times(0,T].
+\label{eq:dirichlet}
+\end{equation}
+Poiché $\bm b$ è costante, $\nabla\cdot\bm b=0$. Il problema è utilizzato come banco di prova controllato per confrontare mesh fisse e strategie di rilocazione nel corso dell'evoluzione temporale.
+
+\subsection{Soluzione manufatta e forzante}
+
+La verifica dell'accuratezza utilizza una soluzione analitica prescritta. Definiamo
+\begin{align}
+c_x(t)&=0.3+0.4\,t/T,
+&c_y(t)&=0.35+0.3\,t/T,\\
+r^2(\bm x,t)&=(x-c_x(t))^2
+& &\quad +(y-c_y(t))^2.
+\end{align}
+La soluzione manufatta è
+\begin{equation}
+u^\star(\bm x,t)
+=
+\exp\!\left(-\frac{r^2(\bm x,t)}{2\sigma^2}\right)
+\sin(\pi x)\sin(\pi y)\exp(-\beta t),
+\label{eq:mms}
+\end{equation}
+dove $\sigma>0$ controlla la larghezza della struttura localizzata e $\beta>0$ il decadimento temporale. La forzante è definita per sostituzione esatta:
+\begin{equation}
+f(\bm x,t)=
+\partial_tu^\star(\bm x,t)
++\bm b\cdot\nabla u^\star(\bm x,t)
+-\nu\Delta u^\star(\bm x,t).
+\label{eq:forcing}
+\end{equation}
+Si impongono $u_0=u^\star(\cdot,0)$ e $g_D=u^\star|_{\partial\Omega}$. Le derivate necessarie alla costruzione di $f$ sono analitiche; la soluzione esatta è utilizzata per costruire forzante e dati al contorno e, durante il benchmark, per calcolare gli errori. Come verificato dall'audit della pipeline, essa non viene passata alla GNN come feature di inferenza.
+
+Nella campagna PDE Stage D i coefficienti comuni sono
+\begin{equation}
+\bm b=(0.4,0.2)^T,\qquad
+\nu=10^{-3},\qquad T=0.5.
+\label{eq:pde_coefficients}
+\end{equation}
+I parametri $\sigma$ e $\beta$ variano tra i casi, secondo gli intervalli riportati nella Sezione~\ref{sec:protocollo}.
+
+\subsection{Mesh iniziale e spazio agli elementi finiti}
+
+Il dominio è discretizzato inizialmente mediante una triangolazione uniforme con $32\times32$ suddivisioni cartesiane e due triangoli per cella quadrangolare. La mesh iniziale contiene $N=1089$ nodi e $M=2048$ triangoli. La discretizzazione è conforme e di tipo Galerkin $P_1$; per il quadro generale della formulazione FEM si rimanda a testi standard \citep{quarteroni2009,donea2003finite}. Le funzioni di forma sono lineari e continue:
+\begin{equation}
+\begin{aligned}
+V_h(t)=\{v_h\in C^0(\overline{\Omega}):
+&\ v_h|_K\in\mathbb P_1(K),\\[-0.2em]
+&\ \forall K\in\mathcal T_h(t)\}.
+\end{aligned}
+\end{equation}
+Nella $r$-adattività considerata, il numero di nodi, il numero di elementi e la connettività rimangono invariati; vengono aggiornate soltanto le coordinate dei nodi interni. I nodi del bordo restano vincolati alla geometria prescritta.
+
+La formulazione debole Euleriana di Galerkin, per funzioni test $v_h$ che rispettano i vincoli omogenei associati alle condizioni di Dirichlet, è
+\begin{equation}
+(\partial_t u_h,v_h)_\Omega
++(\bm b\cdot\nabla u_h,v_h)_\Omega
++\nu(\nabla u_h,\nabla v_h)_\Omega
+=(f,v_h)_\Omega.
+\label{eq:weak_eulerian}
+\end{equation}
+L'integrazione temporale di riferimento è il metodo di Eulero implicito, corrispondente a $\theta=1$, con passo costante $\Delta t=0.005$ e $N_t=100$ passi nell'intervallo $[0,0.5]$. La discretizzazione spaziale è $P_1$. L'ispezione del nucleo C++ impiegato nelle campagne conferma l'assemblaggio Galerkin standard dei termini di massa, convezione e diffusione; non è presente un addendo SUPG nell'assemblaggio Euleriano né in quello ALE. Una chiave \texttt{use\_supg} presente in alcuni YAML non è consumata dal core numerico e non viene quindi interpretata come una stabilizzazione effettivamente attiva.
+
+\subsection{Metriche di errore}
+
+Per un istante $t_n$, si definisce l'errore relativo in norma $L^2$:
+\begin{equation}
+E_{L^2}(t_n)=
+\frac{\norm{u_h(\cdot,t_n)-u^\star(\cdot,t_n)}_{L^2(\Omega)}}
+{\norm{u^\star(\cdot,t_n)}_{L^2(\Omega)}}.
+\label{eq:rel_l2}
+\end{equation}
+Per la componente in $H^1$ il codice calcola la seminorma, non la norma completa. Si definisce pertanto
+\begin{equation}
+\begin{aligned}
+|v|_{H^1(\Omega)}&:=\norm{\nabla v}_{L^2(\Omega)},\\
+E_{|H^1|}(t_n)&=
+\frac{\norm{\nabla(u_h-u^\star)}_{L^2(\Omega)}}
+{\norm{\nabla u^\star}_{L^2(\Omega)}}.
+\end{aligned}
+\label{eq:rel_h1}
+\end{equation}
+La definizione coincide con l'implementazione, che integra il quadrato della differenza tra i gradienti discreto ed esatto e lo normalizza con la seminorma del gradiente della soluzione manufatta. I risultati indicati nel seguito come errori $H^1$ devono quindi essere interpretati come errori relativi in seminorma $H^1$.
+L'errore temporale medio è calcolato con la regola composita dei trapezi sugli $N_t+1$ valori temporali:
+\begin{equation}
+\begin{aligned}
+\overline E_{\mathcal X}
+&=\frac{1}{T}\int_0^T E_{\mathcal X}(t)\,dt\\
+&\approx\frac{\Delta t}{T}\left[
+\frac12 E_{\mathcal X}(t_0)
++\sum_{n=1}^{N_t-1}E_{\mathcal X}(t_n)
++\frac12E_{\mathcal X}(t_{N_t})\right].
+\end{aligned}
+\label{eq:time_average_error}
+\end{equation}
+dove $\mathcal X$ indica la norma $L^2$ oppure la seminorma $H^1$. Nel seguito, ``errore integrato'' indica la quantità temporale mediata definita in \eqref{eq:time_average_error}, non l'integrale non normalizzato.

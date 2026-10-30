@@ -1,0 +1,39 @@
+\subsection{Campagne progressive}
+
+La valutazione è organizzata in quattro campagne, con obiettivi distinti. Gli Stage A--C verificano separatamente generazione dei target, comportamento della GNN statica, trasferimento dello stato e formulazione ALE. Lo Stage D costituisce il benchmark end-to-end principale, con il modello trajectory-aware inserito nel solver PDE.
+
+\paragraph{Stage A: dataset statico e modello supervisionato.}
+Il dataset statico comprende 210 campioni su mesh $32\times32$: 120 training, 30 validation, 30 test interpolativi e 30 test estrapolativi. I campi sono gaussiani, con centri campionati nel dominio, ampiezza nell'intervallo $[0.8,1.2]$ e parametro $\sigma$ nell'intervallo nominale $[0.03,0.08]$; i test estrapolativi includono valori di $\sigma$ più piccoli e più grandi. I target sono accettati quando la riduzione del funzionale e dell'errore d'interpolazione superano le soglie definite nella configurazione e la mesh candidata è geometricamente ammissibile. Tutti i 210 campioni superano tale criterio di accettazione; ciò non significa che tutte le ottimizzazioni abbiano raggiunto la stazionarietà del problema continuo/discreto.
+
+Il modello Stage A utilizza sei feature nodali, tre feature di arco, dimensione latente 128 e sei passaggi di message passing. L'addestramento dura 150 epoche, batch size 8, learning rate iniziale $10^{-3}$ e decadimento cosinusoidale. La minima validation loss registrata è $8.53\times10^{-5}$ all'epoca 149; l'errore relativo di spostamento in validation resta pari all'89.11\%. Questo dato è riportato per descrivere la qualità della regressione supervisionata, non per sostituire la valutazione geometrica o PDE.
+
+\paragraph{Stage B e C: diagnostica dei componenti.}
+Lo Stage B confronta la mesh fissa, remapping puntuale $P_1$, proiezione $L^2$ e una configurazione ALE con target oracle a budget molto basso. Lo Stage C amplia il confronto con cinque ripetizioni temporali e include la formulazione ALE. Il target oracle Stage B/C è ottenuto con sole tre iterazioni L-BFGS e non è un limite superiore né un riferimento convergente. Le prove di trasferimento dedicate usano dieci target geometrici per quantificare errore e costo degli operatori.
+
+\paragraph{Stage D: benchmark PDE held-out.}
+Il dataset trajectory-aware contiene 88 campioni: 48 training, 12 validation, 12 test interpolativi e 16 test estrapolativi. Gli intervalli usati per training e test sono distinti. Nel test interpolativo, $\sigma\in[0.04,0.07]$ e $\beta\in[0.35,0.65]$; nel test estrapolativo, $\sigma$ è campionato da intervalli esterni $[0.022,0.032]$ e $[0.085,0.105]$, mentre $\beta\in[0.25,0.75]$. La condizione estrapolativa è quindi principalmente associata allo spostamento di $\sigma$ al di fuori dell'intervallo di addestramento $[0.035,0.075]$, con possibile sovrapposizione degli intervalli di $\beta$.
+
+Il benchmark PDE utilizza esclusivamente i 28 casi held-out. Le tre strategie sono: Fixed FEM, Stage A GNN con filtro di sicurezza e ALE, Stage D GNN trajectory-aware con filtro di sicurezza e ALE. Ogni caso parte dalla stessa mesh e dallo stesso stato iniziale; vengono mantenuti invariati PDE, coefficienti, forcing, condizioni al contorno, orizzonte temporale, passo temporale, discretizzazione e soglia geometrica. Le simulazioni utilizzano $T=0.5$, $\Delta t=0.005$, 100 passi e aggiornamento ogni dieci passi. La mesh contiene inizialmente 1089 nodi e 2048 triangoli. Non viene applicato remapping $P_1$ o $L^2$ nella campagna Stage D.
+
+\subsection{Metriche geometriche, computazionali e di consistenza}
+
+La qualità geometrica viene descritta mediante minimo Jacobiano orientato, misura di qualità degli elementi, aspect ratio e conteggi di celle invertite o degeneri; l'uso di indicatori normalizzati e basati sulla forma è coerente con la letteratura sulle misure di qualità degli elementi triangolari \citep{escobar2005an,shewchuk2002good}. Il filtro usa $\epsilon=10^{-4}$, margine configurato $10^{-6}$ e tolleranze geometriche riportate nel file di configurazione. Si distinguono l'ammissibilità matematica rispetto alla soglia e la classificazione floating-point: una singola misura post-filtro risulta inferiore alla soglia stretta per circa $1.35\times10^{-18}$, mentre non sono registrate celle invertite o degeneri.
+
+Il costo viene misurato per episodio e scomposto in inferenza GNN, filtro, aggiornamento delle coordinate, solve nativo FEM/ALE e overhead residuo. La statistica temporale comprende un warm-up escluso e cinque ripetizioni misurate per caso e strategia. I tempi sono wall-clock su CPU in ambiente macOS arm64; non rappresentano benchmark hardware-generalizzati.
+
+La discrepanza degli incrementi di massa è definita come
+\begin{equation}
+D_M^n=
+\left|
+(M_h^n-M_h^{n-1})-
+(M_{\mathrm{ref}}^n-M_{\mathrm{ref}}^{n-1})
+\right|,
+\label{eq:mass_increment_discrepancy}
+\end{equation}
+dove $M_h^n=\int_\Omega u_h^n\,d\bm x$ e $M_{\mathrm{ref}}^n=\int_\Omega u^\star(\bm x,t_n)\,d\bm x$. La versione relativa è normalizzata mediante $\max(\abs{M_{\mathrm{ref}}^0},10^{-12})$. Questa quantità misura una discrepanza rispetto alla variazione di massa del riferimento; non è il residuo completo del bilancio PDE e non viene denominata ``errore di conservazione''.
+
+\subsection{Implementazione e riproducibilità}
+
+La campagna Stage D è stata eseguita su macOS arm64. Le operazioni FEM, ALE, geometriche e la quadratura degli errori sono affidate al core C++20/deal.II esposto tramite binding Python. Il benchmark utilizza seed 1701, inferenza CPU, un warm-up e cinque misurazioni temporali per ciascun caso. Le versioni dei checkpoint sono identificate tramite hash SHA-256 nel file di audit. Il test set è mantenuto separato dalle fasi di training e selezione del checkpoint.
+
+L'audit del call graph ha verificato che l'inferenza riceve esclusivamente feature dello stato numerico corrente; non vengono caricati target oracle durante il benchmark e non vengono passati alla GNN parametri fisici o stati futuri. L'analisi di invariance ha riportato differenza nulla nelle feature di gradiente e nelle predizioni al variare delle informazioni future perturbate. La conclusione di assenza di leakage è pertanto riferita al percorso di inferenza effettivamente verificato e ai canali di informazione esaminati.

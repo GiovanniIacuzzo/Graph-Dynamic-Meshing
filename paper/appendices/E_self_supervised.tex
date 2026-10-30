@@ -1,0 +1,8 @@
+\section{Esperimento self-supervised pathwise-safety}
+\label{app:selfsup}
+
+Il ramo self-supervised pathwise-safety costituisce un esperimento esplorativo separato dalla pipeline supervisionata Stage D. La rete è addestrata minimizzando direttamente un obiettivo di traiettoria che combina errore d'interpolazione normalizzato, qualità geometrica, costo di spostamento e barriera lungo il percorso. Il modello usa una configurazione architetturale differente (dimensione latente 64 e quattro passaggi di message passing) e un dataset specifico.
+
+Sui campioni held-out, la riduzione media dell'obiettivo rispetto alla mesh fissa è 61.47\% sul test interpolativo e 56.65\% sul test estrapolativo. Il filtro interviene nel 50.0\% dei campioni interpolativi e nel 46.88\% degli estrapolativi. Tutti i campioni riportati risultano privi di celle invertite e degeneri dopo il filtro. L'intera traiettoria grezza presenta almeno una violazione del floor del Jacobiano nei campioni dei due split; il filtro è quindi essenziale per l'ammissibilità del percorso.
+
+Queste misure non sono risultati di accuratezza PDE e non vengono combinate con il benchmark Stage D supervisionato. In assenza di una valutazione transiente con lo stesso solver, il ramo self-supervised resta una direzione esplorativa e non supporta affermazioni sull'errore della soluzione PDE.

@@ -1,0 +1,48 @@
+\section{Funzionale di rilocazione e generazione dei riferimenti}
+\label{app:oracolo}
+
+\subsection{Funzionale statico Stage A}
+
+Sia $\bm X^0$ la configurazione iniziale e $\bm X$ una configurazione con topologia invariata. Il funzionale utilizzato per costruire i riferimenti statici Stage A è
+\begin{equation}
+\mathcal J(\bm X;u)=
+\widetilde E_{\mathrm{interp}}(\bm X;u)
++\lambda_D\widetilde D(\bm X)
++\lambda_Q\widetilde Q(\bm X),
+\label{eq:app_oracle_objective}
+\end{equation}
+con
+\begin{align}
+\widetilde E_{\mathrm{interp}}
+&=\frac{1}{E_0}\int_\Omega
+\abs{u(\bm x)-\Pi_{\bm X}u(\bm x)}^2\,d\bm x,\\
+\widetilde D
+&=\frac{1}{N}\norm{\bm X-\bm X^0}_F^2,\\
+\widetilde Q
+&=\frac{1}{M}\sum_{e=1}^{M}(1-\eta_e(\bm X)).
+\end{align}
+I coefficienti sono $\lambda_D=10^{-2}$ e $\lambda_Q=10^{-3}$. $\eta_e$ è la misura geometrica normalizzata utilizzata nell'implementazione. I nodi di bordo sono esclusi dalle variabili di ottimizzazione; i nodi interni sono vincolati al dominio mediante limiti box. La violazione della soglia geometrica $J_e\geq\epsilon$ viene trattata con una penalizzazione quadratica esterna:
+\begin{equation}
+\mu\sum_{e=1}^{M}
+\left[\max(0,\epsilon-J_e(\bm X))\right]^2.
+\end{equation}
+Il problema viene risolto con L-BFGS-B. Nella generazione v4 si utilizzano quadratura Dunavant a sette punti composta con livello di suddivisione 2 (112 punti per triangolo), \texttt{maxiter=2000}, $ftol=10^{-7}$ e $gtol=10^{-5}$.
+
+\subsection{Criterio di accettazione e significato dei target}
+
+La definizione del target è distinta dalla definizione di convergenza dell'ottimizzatore. Un campione Stage A viene accettato se supera le soglie di riduzione del funzionale complessivo e dell'errore d'interpolazione e se la geometria candidata è ammissibile. La soglia minima di riduzione è 50\% per entrambi gli indicatori. Questa regola ha prodotto 210 target accettati su 210.
+
+Tuttavia, la diagnostica dell'ottimizzatore registra 90 casi che raggiungono il limite di iterazioni e nessun target che soddisfa la soglia di stazionarietà sul gradiente proiettato. L'accettazione significa pertanto che la proposta ha migliorato sufficientemente gli indicatori e ha superato i controlli geometrici; non significa che il minimo del funzionale sia stato raggiunto. Nel manoscritto tali target sono denominati \emph{riferimenti a budget finito accettati per qualità}.
+
+La riduzione mediana del funzionale è pari a circa 85.1\% nel training, 84.2\% nella validation, 83.8\% nel test interpolativo e 84.5\% nel test estrapolativo. Queste statistiche descrivono i campioni generati e non certificano la distanza dall'ottimo globale.
+
+\gdmfigure{images/appendix/dataset_oracle_convergence.pdf}{Distribuzione degli stati di terminazione e delle iterazioni dell'ottimizzatore nella generazione dei riferimenti Stage A.}{fig:app_oracle_convergence}
+\gdmfigure{images/appendix/dataset_oracle_geometry_iterations.pdf}{Relazione tra diagnostica geometrica e numero di iterazioni per i riferimenti Stage A.}{fig:app_oracle_geometry}
+\gdmfigure{images/appendix/dataset_target_displacement.pdf}{Distribuzione degli spostamenti nodali dei riferimenti Stage A accettati.}{fig:app_target_displacement}
+\gdmfigure{images/appendix/dataset_target_improvement.pdf}{Riduzione del funzionale e dell'errore d'interpolazione nei diversi split Stage A.}{fig:app_target_improvement}
+
+\subsection{Confronto con la generazione trajectory-aware Stage D}
+
+La generazione trajectory-aware utilizza finestre temporali di ampiezza $H=0.05$ e una quadratura temporale di ordine 3. Il dataset comprende 48 campioni training, 12 validation, 12 test interpolativi e 16 test estrapolativi. Il budget dell'ottimizzatore è limitato a 120 iterazioni per campione e la configurazione non richiede target accettati o convergenti. La valutazione held-out riporta \texttt{oracle\_optimizer\_success\_fraction=0}. Gli spostamenti di questo dataset costituiscono quindi riferimenti temporali a budget limitato, non traiettorie ottime certificate.
+
+La distinzione tra i due dataset deve essere mantenuta: Stage A utilizza campi gaussiani statici e 210 campioni; Stage D utilizza campi manufatti dipendenti dal tempo e 88 campioni. I due insiemi non sono intercambiabili e i rispettivi target non devono essere mescolati.

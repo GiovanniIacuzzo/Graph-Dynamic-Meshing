@@ -1,0 +1,45 @@
+\subsection{Stage A: qualità statica della rilocazione}
+
+Nel test interpolativo, l'errore medio di interpolazione del campo gaussiano passa da $0.21954\times10^{-4}$ sulla mesh fissa a $0.16515\times10^{-4}$ con GNN e filtro di sicurezza, corrispondente a una riduzione del 24.77\%. Il miglioramento si osserva in 30 campioni su 30. Nel test estrapolativo, l'errore medio passa da $0.50051\times10^{-4}$ a $0.42820\times10^{-4}$, con riduzione del 14.45\%; il miglioramento si osserva in 23 campioni su 30. Il filtro elimina le inversioni osservate nelle proposte grezze: prima del filtro sono state registrate tre celle invertite nel test interpolativo e otto nel test estrapolativo; dopo il filtro non sono state registrate inversioni.
+
+Questi risultati dimostrano che la GNN statica migliora, in media, il funzionale di interpolazione di riferimento. Non dimostrano un miglioramento della soluzione della PDE, né una buona regressione degli spostamenti target: la validation relative displacement error del training Stage A resta pari all'89.11\%. Inoltre, il riferimento variazionale è a budget finito e non costituisce una soluzione ottima certificata.
+
+\gdmfigurewide{images/stage_a/fig1_error_vs_ood.pdf}{Confronto dell'errore d'interpolazione sul test interpolativo ed estrapolativo: mesh fissa, proposta GNN filtrata e riferimento a budget finito. Il riferimento non è un ottimo certificato.}{fig:stagea_error}
+\gdmfigure{images/stage_a/vis1_mesh_comparison.pdf}{Esempio qualitativo della mesh uniforme e della mesh rilocata dalla GNN, con la struttura localizzata del campo.}{fig:stagea_mesh}
+\gdmfigure{images/stage_a/stage_a_mesh_admissibility.pdf}{Ammissibilità geometrica delle proposte GNN prima e dopo l'applicazione del filtro deterministico.}{fig:stagea_admissibility}
+
+\subsection{Stage B--C: trasferimento dello stato e confronto ALE}
+
+La diagnostica Stage B mostra che il remapping puntuale $P_1$ peggiora l'errore finale dal 9.032\% al 9.834\% e l'errore integrato dal 7.960\% al 9.687\%. La proiezione $L^2$ riduce lievemente l'errore finale al 8.985\%, mentre l'errore integrato resta sostanzialmente invariato (8.041\%). La configurazione oracle--ALE a tre iterazioni produce un errore integrato del 7.744\%, ma il suo budget è troppo basso per interpretarla come limite superiore.
+
+La campagna Stage C, con cinque ripetizioni dei tempi, conferma il quadro. La mesh fissa raggiunge 9.032\% di errore $L^2$ finale e 7.960\% integrato. La configurazione $P_1$ peggiora entrambi (9.834\% e 9.687\%). La proiezione $L^2$ migliora l'errore finale solo marginalmente (8.985\%) e non l'errore integrato (8.041\%). ALE senza remapping ottiene 8.993\% finale e 8.369\% integrato. In questa campagna statica della GNN, pertanto, non emerge un miglioramento robusto dell'errore integrato rispetto alla mesh fissa.
+
+\begin{table*}[!htbp]
+\centering
+\small
+\caption{Benchmark Stage C in ciclo chiuso. Gli errori sono relativi e riportati in percentuale; i tempi sono mediane wall-clock dei run temporizzati, con IQR riportato dal riepilogo sperimentale. Il riferimento oracle è a budget limitato.}
+\label{tab:stagec}
+\begin{tabular}{lrrrr}
+\toprule
+Metodo & $E_{L^2}(T)$ [\%] & $\overline E_{L^2}$ [\%] & $T_{\mathrm{wall}}$ [s] & $T_{\mathrm{remap}}$ [s]\\
+\midrule
+Fixed FEM & 9.032 & 7.960 & $0.103\pm0.001$ & 0.000\\
+GDM + $P_1$ & 9.834 & 9.687 & $0.586\pm0.051$ & 0.034\\
+GDM + $L^2$ & 8.985 & 8.041 & $0.690\pm0.008$ & 0.156\\
+GDM + ALE & 8.993 & 8.369 & $0.784\pm0.009$ & 0.000\\
+Oracle + ALE (3 iterazioni) & 9.226 & 7.744 & $1.812\pm0.020$ & 0.000\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Il confronto tra operatori di trasferimento, eseguito su dieci target, evidenzia il compromesso tra accuratezza e costo. L'errore relativo $L^2$ mediano dopo il trasferimento è 5.78\% per $P_1$ e 3.81\% per la proiezione $L^2$. La discrepanza relativa di massa mediana è rispettivamente $5.89\times10^{-3}$ e $8.12\times10^{-5}$, secondo la definizione specifica del test di trasferimento. Il tempo mediano è circa 1.07 ms per $P_1$ e 13.32 ms per $L^2$, cioè circa 12.4 volte maggiore per la proiezione. Il campione diagnostico è limitato a dieci target e non deve essere interpretato come una caratterizzazione universale degli operatori.
+
+\gdmfigure{images/stage_b/stage_b_native_error_curves.pdf}{Evoluzione dell'errore nel benchmark nativo Stage B per le principali strategie di trasferimento e movimento della mesh.}{fig:stageb_error}
+\gdmfigurewide{images/stage_c/fig_c3_dynamic_error.pdf}{Evoluzione temporale dell'errore relativo $L^2$ nel benchmark Stage C. La mesh fissa rimane il riferimento e le strategie basate sulla GNN statica non producono un miglioramento integrato robusto.}{fig:stagec_error}
+\gdmfigure{images/stage_c/fig_c4_mesh_validity.pdf}{Evoluzione della qualità geometrica nel benchmark Stage C e confronto con la soglia di ammissibilità.}{fig:stagec_mesh}
+\gdmfigure{images/stage_c/fig_c5_runtime_decomposition.pdf}{Decomposizione dei tempi di calcolo nelle strategie Stage C, distinguendo solver, adattamento e trasferimento dello stato.}{fig:stagec_runtime}
+\gdmfigurewide{images/stage_c/fig_c6_qualitative_tracking.pdf}{Esempio qualitativo di tracking della struttura localizzata e movimento della mesh nella simulazione transiente.}{fig:stagec_tracking}
+
+\subsection{Interpretazione delle campagne preliminari}
+
+Le campagne Stage A--C mostrano che un miglioramento dell'interpolazione del campo non garantisce automaticamente un miglioramento della soluzione PDE. In particolare, il trasferimento puntuale può deteriorare la soluzione quando viene ripetuto, mentre la proiezione $L^2$ attenua tale effetto a fronte di un costo più alto. La formulazione ALE evita un remapping esplicito, ma la GNN statica non produce in questo benchmark un miglioramento consistente dell'errore integrato. Questo risultato motiva la valutazione trajectory-aware dello Stage D, senza anticiparne l'esito.
