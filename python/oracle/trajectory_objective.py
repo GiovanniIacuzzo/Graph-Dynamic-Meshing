@@ -16,21 +16,6 @@ from oracle.objective import OracleObjective
 from oracle.mms_field import MMSFieldAtTime
 
 
-def _triangle_degree5_quadrature() -> Tuple[np.ndarray, np.ndarray]:
-    """Degree-five Dunavant quadrature; weights sum to reference area 1/2."""
-    a = 0.059715871789770
-    b = 0.470142064105115
-    c = 0.797426985353087
-    d = 0.101286507323456
-    bary = [
-        [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
-        [a, b, b], [b, a, b], [b, b, a],
-        [c, d, d], [d, c, d], [d, d, c],
-    ]
-    weights = [0.1125] + [0.066197076394253] * 3 + [0.062969590272414] * 3
-    return np.asarray(bary, dtype=np.float64), np.asarray(weights, dtype=np.float64)
-
-
 class TrajectoryOracleObjective:
     """Quadrature approximation of a trajectory-aware relocation objective.
 
@@ -89,7 +74,6 @@ class TrajectoryOracleObjective:
         self.num_nodes = self.initial_nodes.shape[0]
         self.num_cells = self.cells.shape[0]
         self._space_objectives = []
-        quad_bary, quad_weights = _triangle_degree5_quadrature()
         base_metrics = compute_mesh_metrics(self.initial_nodes, self.cells)
         if np.any(base_metrics["jacobians"] < self.epsilon):
             raise ValueError("La mesh iniziale non soddisfa il floor Jacobiano epsilon.")
@@ -103,15 +87,12 @@ class TrajectoryOracleObjective:
                 lambda_D=0.0,
                 lambda_Q=self.lambda_Q,
                 epsilon=self.epsilon,
+                # Stage D intentionally uses the unsplit degree-five Dunavant-7
+                # rule. Passing level 0 avoids constructing/evaluating the much
+                # more expensive static-oracle composite level-2 rule before
+                # replacing it with Q7, which used to do redundant work.
+                quadrature_subdivision_level=0,
             )
-            # Use a degree-five spatial rule for the narrow Gaussian times sine
-            # factors, and recompute its normalization with the same rule.
-            obj.quad_bary = quad_bary.copy()
-            obj.quad_weights = quad_weights.copy()
-            e0 = obj._compute_interpolation_error(
-                self.initial_nodes, base_metrics["jacobians"]
-            )
-            obj.norm_E = max(float(e0), 1e-12)
             self._space_objectives.append(obj)
 
     def value_and_gradient(self, endpoint_nodes: np.ndarray) -> Tuple[float, np.ndarray]:

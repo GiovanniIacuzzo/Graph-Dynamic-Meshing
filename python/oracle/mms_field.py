@@ -33,6 +33,29 @@ class MMSFieldAtTime:
     def metadata(self) -> Dict[str, Any]:
         return self._metadata
 
+    def evaluate_value_gradient(
+        self, x: np.ndarray, y: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Evaluate only the exact field value and spatial gradient.
+
+        ``OracleObjective`` uses this fast-path interface inside its repeated
+        objective/gradient evaluations.  Keep it consistent with ``evaluate``
+        while avoiding the unnecessary Laplacian, forcing term and metadata.
+        """
+        x_arr = np.ascontiguousarray(x, dtype=np.float64)
+        y_arr = np.ascontiguousarray(y, dtype=np.float64)
+        if x_arr.ndim != 1 or y_arr.ndim != 1 or x_arr.shape != y_arr.shape:
+            raise ValueError("x e y devono essere vettori 1D della stessa shape.")
+
+        u, ux, uy, _uxx, _uyy, _ut, _forcing = self.pde.evaluate_exact(
+            x_arr, y_arr, self.time
+        )
+        values = np.ascontiguousarray(u, dtype=np.float64)
+        gradient = np.empty((x_arr.size, 2), dtype=np.float64)
+        gradient[:, 0] = ux
+        gradient[:, 1] = uy
+        return values, gradient
+
     def evaluate(
         self, x: np.ndarray, y: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:

@@ -3,11 +3,11 @@ train.py
 Entry point per l'addestramento supervisionato della GNN MeshMover in Graph-Dynamic Meshing.
 
 Pipeline implementata:
-    1. Caricamento parametri da config/config.yaml e fissaggio dei semi
+    1. Caricamento parametri da config/stage_a.yaml e fissaggio dei semi
     2. Creazione dei DataLoader per train e validation
     3. Inizializzazione del modello MeshMoverGNN, ottimizzatore AdamW e LR Scheduler
     4. Calcolo della loss ibrida:
-       - L_target : errore quadratico medio (MSE) rispetto a Delta X* dell'oracle
+       - L_target : errore quadratico medio (MSE) rispetto a Delta X_ref del riferimento a budget finito
        - L_smooth : regolarizzazione Laplaciana / energia di Dirichlet dello spostamento
        - L_barrier: barriera geometrica differenziabile sul determinante Jacobiano J_e
     5. Monitoraggio metriche di validazione, early stopping e salvataggio dei checkpoint
@@ -16,7 +16,7 @@ Pipeline implementata:
 
 import argparse
 import sys
-import json
+import json as json_module
 import time
 from pathlib import Path
 from typing import Dict, Any, Tuple
@@ -35,6 +35,7 @@ from model.model import MeshMoverGNN
 from dataset.dataset import GraphDynamicMeshingDataset, collate_graph_batch
 from evaluation.metrics import compute_displacement_metrics
 from utils.utils import load_config, save_config, ensure_dir, set_seed, setup_logger, Timer
+from plotting.training import plot_training_history
 
 
 # =============================================================================
@@ -273,7 +274,7 @@ def validate_one_epoch(
 
 def main():
     parser = argparse.ArgumentParser(description="Train GDM MeshMoverGNN")
-    parser.add_argument("--config", default="config/config.yaml", help="Percorso del file YAML di configurazione")
+    parser.add_argument("--config", default="config/stage_a.yaml", help="Percorso del file YAML di configurazione")
     args = parser.parse_args()
     config_path = Path(args.config)
     if not config_path.exists():
@@ -293,6 +294,62 @@ def main():
     )
     logger.info("=== Inizializzazione Pipeline di Training GNN (Stage A) ===")
 
+    data_cfg = config["dataset"]
+    if bool(data_cfg.get("diagnostic_only", False)):
+        raise RuntimeError(
+            "This configuration is marked dataset.diagnostic_only=true. "
+            "It may generate diagnostic samples, but it must not be used to train a model. "
+            "Use the full production configuration after the dataset audit passes."
+        )
+    require_accepted = bool(data_cfg.get("require_accepted_targets", data_cfg.get("require_converged_targets", True)))
+    minimum_acceptance_rate = float(data_cfg.get("minimum_target_acceptance_rate", data_cfg.get("minimum_converged_fraction", 0.95)))
+    allow_audit_warnings = bool(data_cfg.get("allow_dataset_audit_warnings", False))
+    audit_path = output_dir / "figures" / "dataset_audit" / "dataset_quality_audit.json"
+    if require_accepted and not allow_audit_warnings:
+        import json
+        if not audit_path.is_file():
+            raise RuntimeError(
+                f"Dataset audit file is missing: {audit_path}. "
+                "Run training/generate_dataset.py with the same configuration first, "
+                "or run the read-only plotting.dataset audit on the configured manifest/raw_dir. "
+                "Training is blocked until the dataset quality audit is present."
+            )
+        audit_data = json.loads(audit_path.read_text(encoding="utf-8"))
+        expected_manifest = Path(data_cfg["manifest_path"]).resolve()
+        expected_raw = Path(data_cfg["raw_dir"]).resolve()
+        audited_manifest = Path(audit_data.get("manifest_path", "")).resolve()
+        audited_raw = Path(audit_data.get("raw_dir", "")).resolve()
+        if audited_manifest != expected_manifest or audited_raw != expected_raw:
+            raise RuntimeError(
+                "Dataset audit paths do not match the active configuration. "
+                f"Expected manifest/raw_dir={expected_manifest} / {expected_raw}; "
+                f"audit contains {audited_manifest} / {audited_raw}. "
+                "Regenerate or rerun the audit using the same configuration before training."
+            )
+        objective_cfg = config.get("oracle", {}).get("objective", {})
+        expected_q_rule = objective_cfg.get("quadrature_rule")
+        expected_q_level = objective_cfg.get("quadrature_subdivision_level")
+        if expected_q_rule is not None or expected_q_level is not None:
+            q_audit = audit_data.get("oracle_quadrature", {})
+            observed_rules = q_audit.get("observed_rules", [])
+            observed_levels = q_audit.get("observed_subdivision_levels", [])
+            expected_rules = [str(expected_q_rule)] if expected_q_rule is not None else observed_rules
+            expected_levels = [int(expected_q_level)] if expected_q_level is not None else observed_levels
+            if observed_rules != expected_rules or observed_levels != expected_levels:
+                raise RuntimeError(
+                    "Dataset quadrature provenance does not match the active config. "
+                    f"Expected rule/level={expected_rules}/{expected_levels}; "
+                    f"audit contains {observed_rules}/{observed_levels}. "
+                    "Do not train on targets generated with a different quadrature rule."
+                )
+        if audit_data.get("audit_status") != "PASS":
+            raise RuntimeError(
+                f"Dataset audit status is {audit_data.get('audit_status')!r}: {audit_path}. "
+                "Training is blocked because the finite-budget reference-target audit failed. "
+                "Review target acceptance, objective-improvement, geometry and quadrature diagnostics, or set "
+                "dataset.allow_dataset_audit_warnings=true only for an explicitly documented diagnostic run."
+            )
+
     # Salvataggio tracciabile della configurazione esatta per l'esperimento
     save_config(config, output_dir / "reproduced_config.yaml")
 
@@ -309,15 +366,32 @@ def main():
         logger.info("Dispositivo di calcolo attivo: CPU")
 
     # 2. Inizializzazione Datasets e DataLoaders
-    data_cfg = config["dataset"]
     train_dataset = GraphDynamicMeshingDataset(
         data_dir=data_cfg["raw_dir"],
-        split="train"
+        split="train",
+        require_accepted_targets=require_accepted,
     )
     val_dataset = GraphDynamicMeshingDataset(
         data_dir=data_cfg["raw_dir"],
-        split="validation"
+        split="validation",
+        require_accepted_targets=require_accepted,
     )
+    train_rate = len(train_dataset) / max(train_dataset.num_candidates_before_filter, 1)
+    val_rate = len(val_dataset) / max(val_dataset.num_candidates_before_filter, 1)
+    logger.info(
+        "Reference-target acceptance filter: %s | train %d/%d accepted (%.1f%%, %d rejected), validation %d/%d accepted (%.1f%%, %d rejected)",
+        require_accepted,
+        len(train_dataset), train_dataset.num_candidates_before_filter, 100.0 * train_rate, train_dataset.num_unaccepted_filtered,
+        len(val_dataset), val_dataset.num_candidates_before_filter, 100.0 * val_rate, val_dataset.num_unaccepted_filtered,
+    )
+    if require_accepted and not allow_audit_warnings:
+        if train_rate < minimum_acceptance_rate or val_rate < minimum_acceptance_rate:
+            raise RuntimeError(
+                "Insufficient accepted finite-budget reference targets for Stage-A training: "
+                f"train={train_rate:.1%}, validation={val_rate:.1%}, "
+                f"minimum required={minimum_acceptance_rate:.1%}. "
+                "Inspect rejected samples before training."
+            )
 
     t_cfg = config["training"]
     train_loader = DataLoader(
@@ -476,8 +550,10 @@ def main():
     torch.save(final_checkpoint, checkpoints_dir / "final_model.pt")
 
     with open(output_dir / "training_history.json", "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2)
+        json_module.dump(history, f, indent=2)
 
+    figure_paths = plot_training_history(history, output_dir / "figures")
+    logger.info("Training figures exported: %s", {key: [str(p) for p in value] for key, value in figure_paths.items()})
     logger.info(f"=== Addestramento concluso in {total_train_timer.elapsed_seconds:.2f} s ===")
     logger.info(f"Miglior modello salvato in: {(checkpoints_dir / 'best_model.pt').resolve()}")
 

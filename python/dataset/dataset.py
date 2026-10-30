@@ -7,7 +7,8 @@ in tensori per il training della GNN MeshMover:
     - Node Features: [x, y, u, grad_u_x, grad_u_y, is_boundary]
     - Edge Index:    [2, E]
     - Edge Features: [dx, dy, ||dx||]
-    - Target:        Delta X* = X* - X
+    - Target:        Delta X_ref = X_ref - X; X_ref is a quality-screened
+                      finite-budget reference, not a certified optimum
 
 Garantisce partizionamento out-of-distribution (OOD) e parametrico.
 """
@@ -33,8 +34,8 @@ class MeshSample:
         cells: np.ndarray,              # [M, 3], int64
         u: np.ndarray,                  # [N], float64
         grad_u: np.ndarray,             # [N, 2], float64
-        optimal_nodes: np.ndarray,      # [N, 2], float64
-        displacement: np.ndarray,       # [N, 2], float64 (Delta X*)
+        optimal_nodes: np.ndarray,      # [N, 2], legacy attribute for X_ref
+        displacement: np.ndarray,       # [N, 2], float64 (Delta X_ref)
         metadata: Dict[str, Any]
     ):
         self.sample_id = sample_id
@@ -48,13 +49,17 @@ class MeshSample:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MeshSample":
+        target = data.get("target", {})
+        reference_nodes = target.get("reference_nodes", target.get("optimal_nodes"))
+        if reference_nodes is None:
+            raise KeyError("Target sample must contain 'reference_nodes' or legacy 'optimal_nodes'.")
         return cls(
             sample_id=str(data["metadata"]["sample_id"]),
             nodes=np.ascontiguousarray(data["mesh"]["nodes"], dtype=np.float64),
             cells=np.ascontiguousarray(data["mesh"]["cells"], dtype=np.int64),
             u=np.ascontiguousarray(data["state"]["u"], dtype=np.float64),
             grad_u=np.ascontiguousarray(data["state"]["grad_u"], dtype=np.float64),
-            optimal_nodes=np.ascontiguousarray(data["target"]["optimal_nodes"], dtype=np.float64),
+            optimal_nodes=np.ascontiguousarray(reference_nodes, dtype=np.float64),
             displacement=np.ascontiguousarray(data["target"]["displacement"], dtype=np.float64),
             metadata=data["metadata"]
         )
@@ -62,7 +67,8 @@ class MeshSample:
 
 class GraphDynamicMeshingDataset(Dataset):
     """
-    Dataset PyTorch per coppie (M_t, u_t, Delta X*).
+    Dataset PyTorch per coppie (M_t, u_t, Delta X_ref), where X_ref is a
+    quality-screened finite-budget reference rather than a certified optimum.
     """
     def __init__(
         self,
@@ -70,6 +76,8 @@ class GraphDynamicMeshingDataset(Dataset):
         split: str = "train",
         dtype: torch.dtype = torch.float32,
         normalize_field_scale: bool = False,
+        require_converged_targets: bool = False,
+        require_accepted_targets: Optional[bool] = None,
     ):
         """
         data_dir: cartella contenente i campioni serializzati (.pkl o .pt)
@@ -81,10 +89,40 @@ class GraphDynamicMeshingDataset(Dataset):
         self.split = split
         self.dtype = dtype
         self.normalize_field_scale = bool(normalize_field_scale)
+        # New datasets distinguish first-order stationarity (`converged`) from
+        # acceptance as a finite-budget supervision target (`target_accepted`).
+        # Keep the old argument as a backwards-compatible alias.
+        self.require_accepted_targets = (
+            bool(require_converged_targets) if require_accepted_targets is None
+            else bool(require_accepted_targets)
+        )
+        self.require_converged_targets = bool(require_converged_targets)
 
         assert self.data_dir.exists(), f"Directory non trovata: {self.data_dir}"
 
-        self.sample_files: List[Path] = self._resolve_samples_for_split()
+        resolved_files = self._resolve_samples_for_split()
+        self.num_candidates_before_filter = len(resolved_files)
+        self.num_unaccepted_filtered = 0
+        self.num_unconverged_filtered = 0  # legacy alias for existing training logs
+        if self.require_accepted_targets:
+            filtered_files: List[Path] = []
+            for sample_path in resolved_files:
+                try:
+                    with sample_path.open("rb") as stream:
+                        metadata = pickle.load(stream).get("metadata", {})
+                    accepted = bool(metadata.get("target_accepted", metadata.get("converged", False)))
+                    if accepted:
+                        filtered_files.append(sample_path)
+                    else:
+                        self.num_unaccepted_filtered += 1
+                        self.num_unconverged_filtered += 1
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Impossibile verificare lo stato di accettazione del target in {sample_path}: {exc}"
+                    ) from exc
+            self.sample_files = filtered_files
+        else:
+            self.sample_files = resolved_files
         # C++ topology is immutable for a stored sample. Cache only array outputs,
         # not MeshState objects, so dataset iteration does not rebuild deal.II's
         # triangulation on every epoch.
@@ -192,7 +230,7 @@ class GraphDynamicMeshingDataset(Dataset):
         dist = np.linalg.norm(diff, axis=1, keepdims=True)
         edge_feats = np.hstack([diff, dist])
 
-        # 4. Target Displacement: Delta X* = X* - X
+        # 4. Target Displacement: Delta X_ref = X_ref - X
         target_disp = sample.displacement
 
         return {

@@ -52,10 +52,14 @@ run_in_env() {
 }
 
 # 3. Verifica degli strumenti di build nell'ambiente
-echo "[INFO] Verifica di Python, CMake, Ninja e pybind11..."
+echo "[INFO] Verifica di Python, CMake e pybind11..."
 run_in_env python -c "import sys, torch, torch_geometric, pybind11; print(f'Python {sys.version.split()[0]}, PyTorch {torch.__version__}, PyG {torch_geometric.__version__}, pybind11 {pybind11.__version__}')"
 run_in_env cmake --version >/dev/null
-run_in_env ninja --version >/dev/null
+if command -v ninja >/dev/null 2>&1; then
+    echo "[INFO] Ninja disponibile."
+else
+    echo "[INFO] Ninja non installato: verrà usato il generatore CMake predefinito."
+fi
 
 # 4. Verifica di deal.II come dipendenza C++ esterna (opzionale per il solo lato Python, richiesta per _gdm_core)
 BUILD_CPP="${GDM_BUILD_CPP:-1}"
@@ -75,13 +79,23 @@ if [[ "${BUILD_CPP}" == "1" ]]; then
         echo "       oppure imposta GDM_BUILD_CPP=0 per saltare la compilazione dell'estensione C++."
     fi
 
-    echo "[INFO] Configurazione e compilazione del core C++ (_gdm_core) con CMake + Ninja..."
-    if [[ -n "${DEAL_II_DIR:-}" ]]; then
-        run_in_env cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DDEAL_II_DIR=${DEAL_II_DIR}"
-    else
-        run_in_env cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    BUILD_DIR="${GDM_BUILD_DIR:-build}"
+    GENERATOR_ARGS=()
+    if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
+        CACHED_GENERATOR="$(sed -n 's/^CMAKE_GENERATOR:INTERNAL=//p' "${BUILD_DIR}/CMakeCache.txt" | head -n 1)"
+        echo "[INFO] Riutilizzo '${BUILD_DIR}' con il generatore CMake esistente: ${CACHED_GENERATOR:-non specificato}."
+        # Do not pass -G to an existing build tree: CMake caches its generator.
+    elif command -v ninja >/dev/null 2>&1; then
+        GENERATOR_ARGS=(-G Ninja)
     fi
-    run_in_env cmake --build build
+
+    echo "[INFO] Configurazione e compilazione del core C++ (_gdm_core)..."
+    if [[ -n "${DEAL_II_DIR:-}" ]]; then
+        run_in_env cmake -S . -B "${BUILD_DIR}" "${GENERATOR_ARGS[@]}" -DCMAKE_BUILD_TYPE=Release "-DDEAL_II_DIR=${DEAL_II_DIR}"
+    else
+        run_in_env cmake -S . -B "${BUILD_DIR}" "${GENERATOR_ARGS[@]}" -DCMAKE_BUILD_TYPE=Release
+    fi
+    run_in_env cmake --build "${BUILD_DIR}" --parallel "${GDM_BUILD_JOBS:-2}"
 else
     echo "[INFO] GDM_BUILD_CPP=0: compilazione C++ (_gdm_core) saltata."
 fi

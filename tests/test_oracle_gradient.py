@@ -53,7 +53,8 @@ def test_oracle_analytic_gradient_matches_finite_differences():
         lambda_D=0.01,
         lambda_Q=0.001,
         epsilon=1e-4,
-        max_iter=5
+        max_iter=5,
+        quadrature_subdivision_level=2,
     )
     objective = optimizer.objective
 

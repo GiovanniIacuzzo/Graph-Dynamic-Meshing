@@ -19,6 +19,7 @@ from typing import Dict, Any, Tuple, Optional
 import numpy as np
 from oracle.native_geometry import compute_native_mesh_metrics_arrays as compute_mesh_metrics
 from oracle.field import GaussianBumpField
+from oracle.quadrature import composite_triangle_rule
 
 
 class OracleObjective:
@@ -34,7 +35,8 @@ class OracleObjective:
         boundary_nodes: np.ndarray,
         lambda_D: float = 0.01,
         lambda_Q: float = 0.001,
-        epsilon: float = 1e-4
+        epsilon: float = 1e-4,
+        quadrature_subdivision_level: int = 2,
     ):
         """
         Input:
@@ -63,68 +65,58 @@ class OracleObjective:
         # Coordinate di Dirichlet prefissate sul bordo
         self.boundary_coords = self.initial_nodes[self.boundary_nodes].copy()
 
-        # Punti e pesi della regola di quadratura di Gauss simmetrica a 3 punti su simplesso
-        # Coordinate baricentriche (zeta_1, zeta_2, zeta_3) con peso w_k = 1/3 (area simplesso rif. = 1/2)
-        self.quad_bary = np.array([
-            [2.0 / 3.0, 1.0 / 6.0, 1.0 / 6.0],
-            [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0],
-            [1.0 / 6.0, 1.0 / 6.0, 2.0 / 3.0]
-        ], dtype=np.float64)
-        self.quad_weights = np.array([1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0], dtype=np.float64)
+        # Composite degree-five Dunavant rule.  The sensitivity study showed
+        # 12--15% errors with the former Q3 rule and up to 2.47% for unsplit Q7.
+        # Composite Q7 level 2 agreed with level 4 to < 5e-4% on both supplied
+        # deformed targets.  The rule is fixed during optimization to preserve
+        # a smooth, consistent objective/analytic gradient.
+        if (
+            isinstance(quadrature_subdivision_level, bool)
+            or int(quadrature_subdivision_level) != quadrature_subdivision_level
+        ):
+            raise ValueError("quadrature_subdivision_level must be an integer in [0, 4].")
+        self.quadrature_subdivision_level = int(quadrature_subdivision_level)
+        self.quad_bary, self.quad_weights = composite_triangle_rule(
+            self.quadrature_subdivision_level
+        )
+        self.quadrature_rule = "dunavant_7_composite"
 
         # Stima del fattore di normalizzazione iniziale E_0 per garantire scala unitaria
         metrics_0 = compute_mesh_metrics(self.initial_nodes, self.cells)
         assert np.all(metrics_0["jacobians"] >= self.epsilon), "La mesh iniziale viola la soglia epsilon"
         e_interp_0 = self._compute_interpolation_error(self.initial_nodes, metrics_0["jacobians"])
+        self.initial_interpolation_error = float(e_interp_0)
         self.norm_E = max(float(e_interp_0), 1e-12)
 
     def _compute_interpolation_error(self, nodes: np.ndarray, jacobians: np.ndarray) -> float:
-        """
-        Calcola l'integrale numerico dell'errore L2:
-            || u_ref - Pi_X u_ref ||_{L^2(Omega)}^2 = sum_e int_e (u_ref - u_h)^2 dOmega
-        utilizzando quadratura di Gauss su ciascun elemento.
-        """
-        # Coordinate dei vertici degli M triangoli: [M, 3, 2]
-        tri_coords = nodes[self.cells]  # shape: [M, 3, 2]
+        """Evaluate the squared L2 interpolation error with composite Q7.
 
-        # Valutazione del campo nodale discreto u_h ai vertici (interpolante P1)
-        u_nodes, _, _, _ = self.field.evaluate(nodes[:, 0], nodes[:, 1])
+        All quadrature points of all elements are evaluated in one vectorized
+        field call.  This avoids a Python loop for each of the 28/112 quadrature
+        points while retaining a fixed, differentiable quadrature rule.
+        """
+        tri_coords = nodes[self.cells]  # [M, 3, 2]
+        u_nodes, _ = self.field.evaluate_value_gradient(nodes[:, 0], nodes[:, 1])
         u_tri_nodes = u_nodes[self.cells]  # [M, 3]
 
-        total_err_sq = 0.0
-
-        # Ciclo sui 3 punti di quadratura di Gauss
-        for q_idx in range(self.quad_bary.shape[0]):
-            bary = self.quad_bary[q_idx]  # [3]
-            weight = self.quad_weights[q_idx]
-
-            # Coordinate fisiche (x_q, y_q) del punto di quadratura: [M, 2]
-            xq = (
-                bary[0] * tri_coords[:, 0, 0]
-                + bary[1] * tri_coords[:, 1, 0]
-                + bary[2] * tri_coords[:, 2, 0]
-            )
-            yq = (
-                bary[0] * tri_coords[:, 0, 1]
-                + bary[1] * tri_coords[:, 1, 1]
-                + bary[2] * tri_coords[:, 2, 1]
-            )
-
-            # Valore esatto continuo u_ref(x_q, y_q)
-            u_exact, _, _, _ = self.field.evaluate(xq, yq)
-
-            # Valore interpolato lineare P1: u_h(x_q, y_q) = sum_i zeta_i * u_i
-            u_interp = (
-                bary[0] * u_tri_nodes[:, 0]
-                + bary[1] * u_tri_nodes[:, 1]
-                + bary[2] * u_tri_nodes[:, 2]
-            )
-
-            # Integrazione locale: (u_exact - u_interp)^2 * det(J_e) * weight
-            point_err = (u_exact - u_interp) ** 2
-            total_err_sq += np.sum(point_err * np.abs(jacobians) * weight)
-
-        return float(total_err_sq)
+        # [Q, M, 2], barycentric points in each physical triangle.
+        physical_q = np.einsum(
+            "qi,mid->qmd", self.quad_bary, tri_coords, optimize=True
+        )
+        q_count = self.quad_bary.shape[0]
+        xq = physical_q[:, :, 0].reshape(-1)
+        yq = physical_q[:, :, 1].reshape(-1)
+        u_exact, _ = self.field.evaluate_value_gradient(xq, yq)
+        u_exact = u_exact.reshape(q_count, self.num_cells)
+        u_interp = np.einsum(
+            "qi,mi->qm", self.quad_bary, u_tri_nodes, optimize=True
+        )
+        residual_sq = (u_exact - u_interp) ** 2
+        return float(np.sum(
+            self.quad_weights[:, None]
+            * np.abs(jacobians)[None, :]
+            * residual_sq
+        ))
 
 
     @staticmethod
@@ -171,88 +163,71 @@ class OracleObjective:
         nodes: np.ndarray,
         jacobians: np.ndarray
     ) -> Tuple[float, np.ndarray]:
-        """
-        Calcola l'errore L2 quadratico integrato e il gradiente analitico.
+        """Compute composite-Q7 interpolation error and its analytic gradient.
 
-        Usa |J| per integrare anche configurazioni intermedie non ammissibili.
-        Per J > 0 coincide con il funzionale originale.
+        The same fixed quadrature rule is used by ``evaluate`` and by this
+        derivative.  For element e, Q_q = sum_i lambda_i X_{e,i}; therefore
+        d(u(Q_q)-u_h(Q_q))/dX_{e,i} = lambda_i (grad u(Q_q)-grad u(X_{e,i})).
+        The absolute determinant derivative is signed consistently with J.
         """
-        tri_coords = nodes[self.cells]
-
-        u_nodes, grad_u_nodes, _, _ = self.field.evaluate(
+        tri_coords = nodes[self.cells]  # [M, 3, 2]
+        u_nodes, grad_u_nodes = self.field.evaluate_value_gradient(
             nodes[:, 0], nodes[:, 1]
         )
-
         u_tri_nodes = u_nodes[self.cells]
-        grad_u_tri_nodes = grad_u_nodes[self.cells]
-
+        grad_u_tri_nodes = grad_u_nodes[self.cells]  # [M, 3, 2]
         grad_jacobians = self._triangle_jacobian_gradients(tri_coords)
-
         jacobian_measure = np.abs(jacobians)
         jacobian_sign = np.where(jacobians >= 0.0, 1.0, -1.0)
-        grad_measure_jacobians = (
-            grad_jacobians * jacobian_sign[:, None, None]
+        grad_measure_jacobians = grad_jacobians * jacobian_sign[:, None, None]
+
+        physical_q = np.einsum(
+            "qi,mid->qmd", self.quad_bary, tri_coords, optimize=True
         )
-
-        total_err_sq = 0.0
-        grad_local = np.zeros(
-            (self.num_cells, 3, 2), dtype=np.float64
+        q_count = self.quad_bary.shape[0]
+        xq = physical_q[:, :, 0].reshape(-1)
+        yq = physical_q[:, :, 1].reshape(-1)
+        u_exact, grad_exact = self.field.evaluate_value_gradient(xq, yq)
+        u_exact = u_exact.reshape(q_count, self.num_cells)
+        grad_exact = grad_exact.reshape(q_count, self.num_cells, 2)
+        u_interp = np.einsum(
+            "qi,mi->qm", self.quad_bary, u_tri_nodes, optimize=True
         )
+        residual = u_exact - u_interp
+        residual_sq = residual ** 2
 
-        for q_idx in range(self.quad_bary.shape[0]):
-            bary = self.quad_bary[q_idx]
-            weight = self.quad_weights[q_idx]
-
-            xq = (
-                bary[0] * tri_coords[:, 0, 0]
-                + bary[1] * tri_coords[:, 1, 0]
-                + bary[2] * tri_coords[:, 2, 0]
-            )
-            yq = (
-                bary[0] * tri_coords[:, 0, 1]
-                + bary[1] * tri_coords[:, 1, 1]
-                + bary[2] * tri_coords[:, 2, 1]
-            )
-
-            u_exact, grad_exact, _, _ = self.field.evaluate(xq, yq)
-
-            u_interp = (
-                bary[0] * u_tri_nodes[:, 0]
-                + bary[1] * u_tri_nodes[:, 1]
-                + bary[2] * u_tri_nodes[:, 2]
-            )
-
-            residual = u_exact - u_interp
-            residual_sq = residual**2
-
-            total_err_sq += np.sum(
-                residual_sq * jacobian_measure * weight
-            )
-
-            for local_i in range(3):
-                grad_residual = bary[local_i] * (
-                    grad_exact - grad_u_tri_nodes[:, local_i, :]
-                )
-
-                grad_local[:, local_i, :] += weight * (
-                    grad_measure_jacobians[:, local_i, :]
-                    * residual_sq[:, None]
-                    + 2.0
-                    * jacobian_measure[:, None]
-                    * residual[:, None]
-                    * grad_residual
-                )
-
-        grad_nodes = np.zeros_like(nodes, dtype=np.float64)
+        total_err_sq = float(np.sum(
+            self.quad_weights[:, None]
+            * jacobian_measure[None, :]
+            * residual_sq
+        ))
+        weighted_residual_sq = np.einsum(
+            "q,qm->m", self.quad_weights, residual_sq, optimize=True
+        )
+        grad_local = np.zeros((self.num_cells, 3, 2), dtype=np.float64)
 
         for local_i in range(3):
-            np.add.at(
-                grad_nodes,
-                self.cells[:, local_i],
-                grad_local[:, local_i, :]
+            grad_residual = self.quad_bary[:, local_i, None, None] * (
+                grad_exact - grad_u_tri_nodes[None, :, local_i, :]
             )
+            residual_term = 2.0 * np.sum(
+                self.quad_weights[:, None, None]
+                * jacobian_measure[None, :, None]
+                * residual[:, :, None]
+                * grad_residual,
+                axis=0,
+            )
+            measure_term = (
+                grad_measure_jacobians[:, local_i, :]
+                * weighted_residual_sq[:, None]
+            )
+            grad_local[:, local_i, :] = measure_term + residual_term
 
-        return float(total_err_sq), grad_nodes
+        grad_nodes = np.zeros_like(nodes, dtype=np.float64)
+        for local_i in range(3):
+            np.add.at(grad_nodes, self.cells[:, local_i], grad_local[:, local_i, :])
+
+        return total_err_sq, grad_nodes
 
     def value_and_gradient(
         self,
@@ -473,6 +448,9 @@ class OracleObjective:
         return {
             "total_objective": float(total_obj),
             "interpolation_error": float(e_interp),
+            "quadrature_rule": self.quadrature_rule,
+            "quadrature_subdivision_level": self.quadrature_subdivision_level,
+            "quadrature_points_per_cell": int(self.quad_bary.shape[0]),
             "movement_penalty": float(d_tilde),
             "quality_penalty": float(q_tilde),
             "constraint_penalty": float(constraint_penalty),

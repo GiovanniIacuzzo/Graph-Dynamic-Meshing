@@ -120,6 +120,28 @@ class GaussianBumpField:
 
         return u, grad_u, laplacian, self.metadata
 
+
+    def evaluate_value_gradient(
+        self, x: np.ndarray, y: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Evaluate only the field value and gradient (hot path for the oracle).
+
+        This is mathematically identical to the corresponding outputs of
+        ``evaluate`` but avoids computing the Laplacian and allocating metadata
+        on every L-BFGS-B objective/gradient call.
+        """
+        x_arr, y_arr = self._validate_coordinates(x, y)
+        dx = x_arr - self.mu_x
+        dy = y_arr - self.mu_y
+        r_sq = dx**2 + dy**2
+        sigma_sq = self.sigma**2
+        inv_sigma_sq = 1.0 / sigma_sq
+        u = self.amplitude * np.exp(-0.5 * r_sq / sigma_sq)
+        grad = np.empty((x_arr.size, 2), dtype=np.float64)
+        grad[:, 0] = -dx * inv_sigma_sq * u
+        grad[:, 1] = -dy * inv_sigma_sq * u
+        return np.ascontiguousarray(u), grad
+
     def __call__(
         self,
         x: np.ndarray,

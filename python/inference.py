@@ -8,7 +8,6 @@ predice lo spostamento nodale \\Delta X_{GNN} e applica il Deterministic Safety 
 O(M) per certificare matematicamente che \\min_e J_e(\\alpha_{global}) >= \\epsilon.
 """
 
-import argparse
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
@@ -201,23 +200,35 @@ class MeshMoverInferenceEngine:
         }
 
 
-def run_single_sample_demo(config_path: str, checkpoint_path: str, sample_npz: str) -> None:
-    """Esegue un test rapido di inferenza su un singolo file .npz."""
+def run_single_sample_demo(config_path: str, checkpoint_path: str, sample_path_arg: str) -> None:
+    """Run a single-sample inference demo from a project pickle or an NPZ bundle."""
     config = load_config(config_path)
     engine = MeshMoverInferenceEngine(checkpoint_path=checkpoint_path, config=config)
 
-    with np.load(sample_npz) as data:
-        nodes = data["nodes"]
-        cells = data["cells"]
-        u = data["u"]
-        grad_u = data["grad_u"]
-        oracle_disp = data["oracle_disp"] if "oracle_disp" in data else None
+    sample_path = Path(sample_path_arg)
+    if sample_path.suffix.lower() == ".pkl":
+        import pickle
+        with sample_path.open("rb") as f:
+            sample = pickle.load(f)
+        nodes = np.asarray(sample["mesh"]["nodes"], dtype=np.float64)
+        cells = np.asarray(sample["mesh"]["cells"], dtype=np.int64)
+        u = np.asarray(sample["state"]["u"], dtype=np.float64)
+        grad_u = np.asarray(sample["state"]["grad_u"], dtype=np.float64)
+        target = sample.get("target", {})
+        oracle_disp = target.get("displacement")
+    else:
+        with np.load(sample_path) as data:
+            nodes = data["nodes"]
+            cells = data["cells"]
+            u = data["u"]
+            grad_u = data["grad_u"]
+            oracle_disp = data["oracle_disp"] if "oracle_disp" in data else None
 
     mesh = NativeMeshAdapter.from_arrays(nodes=nodes, cells=cells)
     result = engine.predict(mesh, u, grad_u)
 
     print("=" * 65)
-    print(f"GDM INFERENCE DEMO SU SAMPLE: {Path(sample_npz).name}")
+    print(f"GDM INFERENCE DEMO SU SAMPLE: {sample_path.name}")
     print("=" * 65)
     print(f"Numero nodi / celle     : {mesh.num_nodes} / {mesh.num_cells}")
     print(f"Alpha Safety Filter     : {result['alpha']:.6f} (is_safe={result['is_safe']})")
@@ -228,22 +239,3 @@ def run_single_sample_demo(config_path: str, checkpoint_path: str, sample_npz: s
         rmse = np.sqrt(np.mean(np.sum((result["displacement"] - oracle_disp) ** 2, axis=1)))
         print(f"RMSE vs Oracle Disp     : {rmse:.6e}")
     print("=" * 65)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Inferenza GDM MeshMoverGNN + Safety Filter.")
-    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path config YAML.")
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default="results/stage_a/checkpoints/best_model.pt",
-        help="Path al checkpoint del modello.",
-    )
-    parser.add_argument(
-        "--sample",
-        type=str,
-        default="data/raw/test_id/sample_00000.npz",
-        help="Path a un sample .npz su cui testare l'inferenza.",
-    )
-    args = parser.parse_args()
-    run_single_sample_demo(args.config, args.checkpoint, args.sample)
