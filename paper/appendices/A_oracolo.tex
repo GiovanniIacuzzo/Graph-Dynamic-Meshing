@@ -1,5 +1,5 @@
 \section{Funzionale di rilocazione e generazione dei riferimenti}
-\label{app:oracolo}
+\label{app:riferimenti}
 
 \subsection{Funzionale statico Stage A}
 
@@ -9,7 +9,7 @@ Sia $\bm X^0$ la configurazione iniziale e $\bm X$ una configurazione con topolo
 \widetilde E_{\mathrm{interp}}(\bm X;u)
 +\lambda_D\widetilde D(\bm X)
 +\lambda_Q\widetilde Q(\bm X),
-\label{eq:app_oracle_objective}
+\label{eq:app_reference_objective}
 \end{equation}
 con
 \begin{align}
@@ -36,10 +36,58 @@ Tuttavia, la diagnostica dell'ottimizzatore registra 90 casi che raggiungono il 
 
 La riduzione mediana del funzionale è pari a circa 85.1\% nel training, 84.2\% nella validation, 83.8\% nel test interpolativo e 84.5\% nel test estrapolativo. Queste statistiche descrivono i campioni generati e non certificano la distanza dall'ottimo globale.
 
-\gdmfigure{images/appendix/dataset_oracle_convergence.pdf}{Distribuzione degli stati di terminazione e delle iterazioni dell'ottimizzatore nella generazione dei riferimenti Stage A.}{fig:app_oracle_convergence}
-\gdmfigure{images/appendix/dataset_oracle_geometry_iterations.pdf}{Relazione tra diagnostica geometrica e numero di iterazioni per i riferimenti Stage A.}{fig:app_oracle_geometry}
-\gdmfigure{images/appendix/dataset_target_displacement.pdf}{Distribuzione degli spostamenti nodali dei riferimenti Stage A accettati.}{fig:app_target_displacement}
-\gdmfigure{images/appendix/dataset_target_improvement.pdf}{Riduzione del funzionale e dell'errore d'interpolazione nei diversi split Stage A.}{fig:app_target_improvement}
+\begin{figure}[!htbp]
+\centering
+\IfFileExists{images/appendix/dataset_oracle_convergence.pdf}{%
+  \includegraphics[width=0.95\columnwidth,height=0.28\textheight,keepaspectratio]{images/appendix/dataset_oracle_convergence.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/appendix/dataset_oracle_convergence.pdf}
+  \end{minipage}}%
+}
+\caption{Distribuzione degli stati di terminazione e delle iterazioni dell'ottimizzatore nella generazione dei riferimenti Stage A.}
+\label{fig:app_oracle_convergence}
+\end{figure}
+\begin{figure}[!htbp]
+\centering
+\IfFileExists{images/appendix/dataset_oracle_geometry_iterations.pdf}{%
+  \includegraphics[width=0.95\columnwidth,height=0.28\textheight,keepaspectratio]{images/appendix/dataset_oracle_geometry_iterations.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/appendix/dataset_oracle_geometry_iterations.pdf}
+  \end{minipage}}%
+}
+\caption{Relazione tra diagnostica geometrica e numero di iterazioni per i riferimenti Stage A.}
+\label{fig:app_oracle_geometry}
+\end{figure}
+\begin{figure}[!htbp]
+\centering
+\IfFileExists{images/appendix/dataset_target_displacement.pdf}{%
+  \includegraphics[width=0.95\columnwidth,height=0.28\textheight,keepaspectratio]{images/appendix/dataset_target_displacement.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/appendix/dataset_target_displacement.pdf}
+  \end{minipage}}%
+}
+\caption{Distribuzione degli spostamenti nodali dei riferimenti Stage A accettati.}
+\label{fig:app_target_displacement}
+\end{figure}
+\begin{figure*}[!t]
+\centering
+\IfFileExists{images/appendix/dataset_target_improvement.pdf}{%
+  \includegraphics[width=0.95\textwidth,height=0.34\textheight,keepaspectratio]{images/appendix/dataset_target_improvement.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/appendix/dataset_target_improvement.pdf}
+  \end{minipage}}%
+}
+\caption{Riduzione del funzionale e dell'errore d'interpolazione nei diversi split Stage A.}
+\label{fig:app_target_improvement}
+\end{figure*}
 
 \subsection{Confronto con la generazione trajectory-aware Stage D}
 

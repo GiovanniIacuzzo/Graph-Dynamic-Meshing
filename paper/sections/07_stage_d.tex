@@ -6,12 +6,12 @@ Lo Stage D confronta Fixed FEM, Stage A GNN e Stage D GNN trajectory-aware sugli
 
 La Tabella~\ref{tab:staged_overall} riporta le medie sui 28 casi held-out. Stage D riduce l'errore $L^2$ integrato dal 10.633\% al 9.831\% e l'errore finale dall'11.735\% al 10.821\%. La riduzione relativa media appaiata è rispettivamente dell'8.038\% e dell'8.262\%. Stage A, al contrario, presenta errori medi superiori alla mesh fissa in entrambe le metriche.
 
-\begin{table*}[tbp]
+\begin{table*}[!t]
 \centering
 \small
 \caption{Errore relativo medio sui 28 casi held-out Stage D. I valori sono percentuali; per gli errori integrati si utilizza la media temporale trapezoidale definita in \eqref{eq:time_average_error}.}
 \label{tab:staged_overall}
-\begin{tabular}{lrrrr}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr}
 \toprule
 Strategia & $\overline E_{L^2}$ [\%] & $E_{L^2}(T)$ [\%] & $\overline E_{|H^1|}$ [\%] & $E_{|H^1|}(T)$ [\%]\\
 \midrule
@@ -19,25 +19,35 @@ Fixed FEM & 10.633 & 11.735 & 32.618 & 33.388\\
 Stage A GNN + filtro + ALE & 11.478 & 13.355 & 34.700 & 37.035\\
 Stage D GNN + filtro + ALE & \textbf{9.831} & \textbf{10.821} & \textbf{30.771} & \textbf{32.544}\\
 \bottomrule
-\end{tabular}
+\end{tabular*}
 \end{table*}
 
 Il risultato $L^2$ è coerente nei due split. Nel test interpolativo, l'errore integrato passa dall'8.729\% (Fixed FEM) all'8.043\% (Stage D); nel test estrapolativo passa dal 12.060\% all'11.172\%. Per l'errore finale, i corrispondenti valori sono 9.656\% contro 8.911\% in-domain e 13.295\% contro 12.253\% in extrapolation. Stage D migliora l'errore $L^2$ integrato e finale in tutti i 28 casi appaiati.
 
-\gdmfigurewide{images/stage_d/fig1_relative_l2_error_over_time.pdf}{Evoluzione temporale dell'errore relativo $L^2$ per Fixed FEM, Stage A e Stage D, separata per i regimi interpolativo ed estrapolativo.}{fig:staged_error_time}
-\gdmfigurewide{images/stage_d/fig2_integrated_and_final_l2_error.pdf}{Confronto dell'errore relativo $L^2$ integrato e finale nei due split held-out.}{fig:staged_l2_comparison}
-\gdmfigure{images/stage_d/fig6_interpolation_vs_extrapolation.pdf}{Confronto delle prestazioni nei regimi interpolativo ed estrapolativo. Le metriche sono aggregate sui rispettivi casi held-out.}{fig:staged_ood}
+\begin{figure*}[!t]
+\centering
+\IfFileExists{images/stage_d/fig1_relative_l2_error_over_time.pdf}{%
+  \includegraphics[width=0.96\textwidth,height=0.38\textheight,keepaspectratio]{images/stage_d/fig1_relative_l2_error_over_time.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_d/fig1_relative_l2_error_over_time.pdf}
+  \end{minipage}}%
+}
+\caption{Evoluzione temporale dell'errore relativo $L^2$ per Fixed FEM, Stage A e Stage D, separata per i regimi interpolativo ed estrapolativo.}
+\label{fig:staged_error_time}
+\end{figure*}
 
 \subsection{Confronto statistico appaiato}
 
 Per ogni caso $k$ viene calcolata la differenza tra l'errore Stage D e l'errore Fixed FEM. Gli intervalli di confidenza sono stimati mediante bootstrap non parametrico appaiato con 10\,000 ricampionamenti dei casi; le cinque ripetizioni temporali non vengono trattate come repliche statistiche dell'accuratezza. La Tabella~\ref{tab:paired_stage_d} riporta le riduzioni relative medie, con intervalli al 95\%.
 
-\begin{table*}[tbp]
+\begin{table*}[!t]
 \centering
 \small
 \caption{Riduzione relativa appaiata dell'errore Stage D rispetto a Fixed FEM. Valori positivi indicano un errore inferiore per Stage D. Gli IC al 95\% sono ottenuti con bootstrap appaiato (10\,000 ricampionamenti).}
 \label{tab:paired_stage_d}
-\begin{tabular}{llrrr}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}llrrr}
 \toprule
 Split & Metrica & Riduzione media [\%] & IC 95\% [\%] & Casi migliorati\\
 \midrule
@@ -56,23 +66,59 @@ Totale ($n=28$) & $\overline E_{L^2}$ & \textbf{8.038} & \textbf{[7.591, 8.507]}
  & $\overline E_{|H^1|}$ & 6.264 & [5.643, 6.881] & 28/28\\
  & $E_{|H^1|}(T)$ & 3.514 & [1.597, 5.331] & 21/28\\
 \bottomrule
-\end{tabular}
+\end{tabular*}
 \end{table*}
 
 I risultati sono più uniformi per le metriche $L^2$ e per l'errore in seminorma $H^1$ integrato. L'errore in seminorma $H^1$ finale migliora in 21 casi su 28; nello split interpolativo il suo intervallo bootstrap include lo zero, mentre nello split estrapolativo la riduzione media è positiva secondo l'intervallo riportato. È quindi necessario evitare una formulazione che suggerisca un miglioramento uniforme in ogni norma e a ogni istante.
 
-\gdmfigurewide{images/stage_d/fig7_paired_stage_d_vs_fixed_fem.pdf}{Differenze appaiate tra Stage D e Fixed FEM per ciascun caso held-out. Valori negativi della differenza di errore indicano un miglioramento di Stage D.}{fig:staged_paired}
+\begin{figure*}[!t]
+\centering
+\IfFileExists{images/stage_d/fig7_paired_stage_d_vs_fixed_fem.pdf}{%
+  \includegraphics[width=0.96\textwidth,height=0.38\textheight,keepaspectratio]{images/stage_d/fig7_paired_stage_d_vs_fixed_fem.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_d/fig7_paired_stage_d_vs_fixed_fem.pdf}
+  \end{minipage}}%
+}
+\caption{Differenze appaiate tra Stage D e Fixed FEM per ciascun caso held-out. Valori negativi della differenza di errore indicano un miglioramento di Stage D.}
+\label{fig:staged_paired}
+\end{figure*}
 
 \subsection{Qualità geometrica e intervento del filtro}
 
 Il filtro viene applicato in 211 delle 280 finestre Stage D, pari al 75.36\%; il valore medio del fattore $\alpha$ è 0.4968. Il modello Stage A richiede 265 interventi su 280 finestre (94.64\%) e presenta $\alpha$ medio pari a circa 0.175. Stage D riduce quindi la frequenza di intervento e consente, in media, di applicare una frazione maggiore dello spostamento proposto.
 
-La mesh dopo il filtro non presenta elementi invertiti o degeneri nei risultati registrati. Il minimo Jacobiano osservato è tuttavia $9.999999999999865\times10^{-5}$, lievemente inferiore alla soglia stretta $10^{-4}$ per un errore dell'ordine di $10^{-18}$. Il risultato è compatibile con arrotondamento in doppia precisione, ma non consente di affermare che ogni valore memorizzato soddisfi strettamente la disuguaglianza in aritmetica floating-point. Inoltre, il minimo del fattore $\alpha$ per ciascuna traiettoria raggiunge valori molto piccoli; la media di $\alpha$ da sola non descrive quindi completamente l'intensità delle contrazioni locali nel tempo.
+La mesh dopo il filtro non presenta elementi invertiti o degeneri nei risultati registrati. Il minimo Jacobiano osservato è tuttavia $9.999999999999865\times10^{-5}$, lievemente inferiore alla soglia stretta $10^{-4}$ per uno scarto dell'ordine di $10^{-18}$. Il risultato è compatibile con arrotondamento in doppia precisione, ma non consente di affermare che ogni valore memorizzato soddisfi strettamente la disuguaglianza in aritmetica floating-point. La soglia è assoluta e non è stata ancora dimostrata indipendente dalla risoluzione. Inoltre, il minimo del fattore $\alpha$ per ciascuna traiettoria raggiunge valori molto piccoli; la media di $\alpha$ da sola non descrive quindi completamente l'intensità delle contrazioni locali nel tempo.
 
 L'audit ha verificato in una finestra diagnostica che le coordinate filtrate sono coerenti con l'applicazione di $\alpha$ allo spostamento proposto, con errore in norma infinito $5.55\times10^{-17}$. I CSV temporali, tuttavia, contengono colonne raw e post-filtro duplicate; non permettono pertanto una ricostruzione affidabile del numero di celle non ammissibili prima del filtro per tutte le 280 finestre. Questa limitazione viene mantenuta esplicita.
 
-\gdmfigure{images/stage_d/fig4_geometric_quality_evolution.pdf}{Evoluzione degli indicatori di qualità geometrica della mesh durante le simulazioni held-out.}{fig:staged_geometry}
-\gdmfigure{images/stage_d/fig5_safety_filter_intervention.pdf}{Frequenza degli interventi del filtro di sicurezza e fattore di contrazione applicato nelle due strategie GNN.}{fig:staged_safety}
+\begin{figure}[!htbp]
+\centering
+\IfFileExists{images/stage_d/fig4_geometric_quality_evolution.pdf}{%
+  \includegraphics[width=0.96\columnwidth,height=0.30\textheight,keepaspectratio]{images/stage_d/fig4_geometric_quality_evolution.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_d/fig4_geometric_quality_evolution.pdf}
+  \end{minipage}}%
+}
+\caption{Evoluzione degli indicatori di qualità geometrica della mesh durante le simulazioni held-out.}
+\label{fig:staged_geometry}
+\end{figure}
+\begin{figure}[!htbp]
+\centering
+\IfFileExists{images/stage_d/fig5_safety_filter_intervention.pdf}{%
+  \includegraphics[width=0.96\columnwidth,height=0.30\textheight,keepaspectratio]{images/stage_d/fig5_safety_filter_intervention.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_d/fig5_safety_filter_intervention.pdf}
+  \end{minipage}}%
+}
+\caption{Frequenza degli interventi del filtro di sicurezza e fattore di contrazione applicato nelle due strategie GNN.}
+\label{fig:staged_safety}
+\end{figure}
 
 \subsection{Costo computazionale}
 
@@ -80,12 +126,12 @@ Il tempo wall-clock mediano per episodio è circa 0.1042 s per Fixed FEM, 0.8455
 
 Il principale contributo al costo incrementale è costituito dall'inferenza e dall'aggiornamento geometrico, non dal filtro di sicurezza. I risultati non supportano pertanto alcuna affermazione di accelerazione rispetto alla mesh fissa. Il vantaggio osservato è un miglioramento di accuratezza a fronte di un costo computazionale superiore.
 
-\begin{table*}[tbp]
+\begin{table*}[!t]
 \centering
 \small
 \caption{Tempi wall-clock per episodio. Mediane sui casi held-out e intervalli interquartili ottenuti dalle misure temporali ripetute; un warm-up è escluso e sono utilizzate cinque ripetizioni per caso.}
 \label{tab:runtime_stage_d}
-\begin{tabular}{lrrrr}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr}
 \toprule
 Strategia & Mediana [s] & $Q_{25}$ [s] & $Q_{75}$ [s] & Rapporto vs Fixed\\
 \midrule
@@ -93,10 +139,22 @@ Fixed FEM & 0.1042 & 0.1021 & 0.1066 & $1.00\times$\\
 Stage A GNN + filtro + ALE & 0.8455 & 0.8370 & 0.8515 & $8.11\times$\\
 Stage D GNN + filtro + ALE & 0.8477 & 0.8430 & 0.8527 & $8.14\times$\\
 \bottomrule
-\end{tabular}
+\end{tabular*}
 \end{table*}
 
-\gdmfigurewide{images/stage_d/fig3_computational_cost_comparison.pdf}{Confronto dei tempi wall-clock e delle componenti computazionali per Fixed FEM, Stage A e Stage D.}{fig:staged_runtime}
+\begin{figure*}[!t]
+\centering
+\IfFileExists{images/stage_d/fig3_computational_cost_comparison.pdf}{%
+  \includegraphics[width=0.96\textwidth,height=0.36\textheight,keepaspectratio]{images/stage_d/fig3_computational_cost_comparison.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_d/fig3_computational_cost_comparison.pdf}
+  \end{minipage}}%
+}
+\caption{Confronto dei tempi wall-clock e delle componenti computazionali per Fixed FEM, Stage A e Stage D.}
+\label{fig:staged_runtime}
+\end{figure*}
 
 \subsection{Consistenza geometrica e discrepanza degli incrementi di massa}
 

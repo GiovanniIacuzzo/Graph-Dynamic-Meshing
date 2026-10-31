@@ -3,30 +3,27 @@
 
 \subsection{Tracciabilità dell'inferenza}
 
-Il benchmark ha impiegato i checkpoint Stage A e Stage D identificati dai rispettivi hash SHA-256 registrati nel JSON di integrità. L'audit del call graph ha verificato che l'adattatore di feature non riceve il problema manufatto esatto; la GNN opera sulle coordinate, sul campo FEM corrente, sulle sue derivate discrete e sull'identificatore di bordo. Non sono stati caricati i target oracle nel benchmark e non sono state passate alla rete informazioni fisiche esplicite o stati futuri. I test di perturbazione delle informazioni future hanno restituito differenza nulla nelle feature di gradiente e nelle predizioni. La conclusione di assenza di leakage riguarda questo percorso di inferenza e le informazioni effettivamente verificate.
+Il benchmark ha impiegato i checkpoint Stage A e Stage D identificati dai rispettivi hash SHA-256 registrati negli snapshot degli esperimenti. L'audit del call graph ha verificato che l'adattatore di feature non riceve il problema manufatto esatto: la GNN opera sulle coordinate, sul campo FEM corrente, sulle sue derivate discrete e sull'identificatore di bordo. I target di riferimento non vengono caricati durante l'inferenza; non vengono passati alla rete parametri fisici espliciti o stati futuri. La conclusione di assenza di leakage riguarda il percorso di inferenza e i canali effettivamente verificati.
 
-\subsection{Filtro geometrico: dati disponibili e limitazioni}
+\subsection{Filtro geometrico: dati Stage D e limitazioni}
 
-Nel benchmark Stage D il filtro interviene in 211 finestre su 280 (75.36\%) e il valore medio di $\alpha$ è 0.4968. Per Stage A gli interventi sono 265 su 280 (94.64\%) e $\alpha$ medio è circa 0.175. Il minimo post-filtro registrato per Stage D è $9.999999999999865\times10^{-5}$; il numero di celle invertite e degeneri dopo il filtro è zero. La minima differenza stretta rispetto a $\epsilon=10^{-4}$ è dell'ordine di $10^{-18}$.
-
-L'audit ha riscontrato che alcune colonne del file temporale relative alle metriche raw e post-filtro sono identiche. Di conseguenza, il conteggio completo delle celle non ammissibili prima del filtro non è identificabile dai CSV dell'intera campagna. Un singolo probe ha misurato due celle non ammissibili nella proposta grezza, $\alpha=0.95699$ e nessuna cella non ammissibile dopo il filtro, con errore di consistenza delle coordinate $5.55\times10^{-17}$. Questo probe illustra il funzionamento del filtro in una finestra, ma non viene generalizzato a tutte le finestre.
+Nel benchmark Stage D il filtro interviene in 211 finestre su 280 (75.36\%) e $\alpha$ medio è 0.4968. Per Stage A gli interventi sono 265 su 280 (94.64\%) e $\alpha$ medio è circa 0.175. Il minimo post-filtro registrato per Stage D è $9.999999999999865\times10^{-5}$; il numero di celle invertite e degeneri dopo il filtro è zero. La minima differenza stretta rispetto a $\epsilon=10^{-4}$ è dell'ordine di $10^{-18}$. Alcune colonne del vecchio CSV temporale relative alle metriche raw e post-filtro sono duplicate; il numero di celle raw non ammissibili non è pertanto ricostruibile per tutti gli eventi Stage D.
 
 \subsection{D-GCL e discrepanza degli incrementi di massa}
 
-I massimi residui D-GCL Stage D sono:
+I massimi residui D-GCL del benchmark Stage D sono:
 \[
-R_{\mathrm{GCL,alg}}^\infty=1.9665\times10^{-16},
-\qquad
+R_{\mathrm{GCL,alg}}^\infty=1.9665\times10^{-16},\qquad
 R_{\mathrm{GCL,elem}}^{\max}=4.6972\times10^{-17}.
 \]
-Nel log dei test associato all'audit, nove test risultano superati e uno non supera la soglia stretta del test di free-stream: l'errore in norma infinito è $2.517\times10^{-12}$ rispetto alla tolleranza $10^{-12}$. Questo esito non coincide con i residui algebrico ed element-wise riportati sopra, che sono diagnostiche diverse; non viene pertanto dichiarata la completa conformità dell'intera suite di test. La discrepanza del test di free-stream deve essere risolta o giustificata con un'analisi del residuo del solve lineare prima della sottomissione.
-La metrica di massa è
+Nel log storico dei test, nove test risultano superati e uno non supera la soglia stretta del free-stream: l'errore $L^\infty$ è $2.517\times10^{-12}$ rispetto alla tolleranza $10^{-12}$. Questo esito non coincide con i residui algebrico ed element-wise, che sono diagnostiche differenti. La verifica indipendente E1, descritta nell'Appendice~\ref{app:stageef}, misura inoltre il residuo del solve e la tolleranza GMRES effettiva; non viene usata per riscrivere retroattivamente il log Stage D.
+
+La discrepanza degli incrementi di massa è
 \[
-D_M^n=
-\abs{(M_h^n-M_h^{n-1})-(M_{\mathrm{ref}}^n-M_{\mathrm{ref}}^{n-1})},
+D_M^n=\abs{(M_h^n-M_h^{n-1})-(M_{\mathrm{ref}}^n-M_{\mathrm{ref}}^{n-1})},
 \]
-con versione relativa normalizzata tramite $\max(\abs{M_{\mathrm{ref}}^0},10^{-12})$. La media relativa è circa $1.62\times10^{-4}$ per Fixed FEM e $6.36\times10^{-3}$ per Stage D. La quantità non rappresenta il residuo completo dell'identità integrale della PDE; non include esplicitamente, come una singola identità di bilancio, tutti i contributi di forzante e flussi al contorno. Per tale ragione viene mantenuta la denominazione \emph{discrepanza degli incrementi di massa}.
+con versione relativa normalizzata tramite $\max(\abs{M_{\mathrm{ref}}^0},10^{-12})$. La media relativa è circa $1.62\times10^{-4}$ per Fixed FEM e $6.36\times10^{-3}$ per Stage D. La quantità non rappresenta il residuo completo dell'identità integrale della PDE; non include esplicitamente in un'unica identità tutti i contributi di forzante e flussi al contorno. Per tale ragione viene denominata discrepanza degli incrementi di massa.
 
-\subsection{Dettagli temporali}
+\subsection{Dettagli temporali Stage D}
 
-Le misure temporali sono raccolte per caso e strategia con un warm-up escluso e cinque ripetizioni. Il tempo mediano complessivo Stage D è 0.8477 s per episodio, contro 0.1042 s per Fixed FEM. I timer esclusivi riportano circa 0.465 s per inferenza GNN, 0.0017 s per filtro, 0.211 s per aggiornamento geometrico, 0.161 s per solve ALE--FEM e 0.0127 s di overhead. Il benchmark non effettua remapping. Per la strategia fissa, il timer del solve è Euleriano FEM; per le strategie dinamiche, il timer include il solve accoppiato ALE--FEM. I tempi non vengono interpretati come una decomposizione universale di qualsiasi implementazione ALE.
+Le misure temporali sono raccolte per caso e strategia con un warm-up escluso e cinque ripetizioni. Il tempo mediano Stage D è 0.8477 s per episodio, contro 0.1042 s per Fixed FEM. I timer esclusivi riportano circa 0.465 s per inferenza GNN, 0.0017 s per filtro, 0.211 s per aggiornamento geometrico, 0.161 s per solve ALE--FEM e 0.0127 s di overhead. I tempi non vengono interpretati come una decomposizione universale di qualsiasi implementazione ALE.

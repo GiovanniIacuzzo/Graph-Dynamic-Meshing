@@ -91,13 +91,7 @@ La topologia resta invariata; il solutore ALE nativo aggiorna la geometria e ris
 
 La \emph{Discrete Geometric Conservation Law} (\DGC) esprime la compatibilità tra variazione della geometria della mesh e discretizzazione temporale. In una formulazione ALE, la matrice di massa e gli operatori dipendono dalla configurazione; il termine associato alla velocità di mesh deve essere coerente con tale dipendenza. Una verifica fondamentale consiste nella preservazione del campo costante quando l'evoluzione è ridotta al solo trasporto geometrico, senza dinamica fisica che ne modifichi il valore \citep{farhat2001the,guillard2000on,formaggia2004stability}.
 
-Nel presente lavoro la verifica è effettuata attraverso test di free-stream e residui geometrici algebrici ed element-wise. Nel benchmark Stage D i massimi residui riportati sono rispettivamente
-\begin{equation}
-R_{\mathrm{GCL,alg}}^\infty=1.97\times10^{-16},
-\qquad
-R_{\mathrm{GCL,elem}}^{\max}=4.70\times10^{-17}.
-\end{equation}
-Questi valori documentano la coerenza geometrica del test implementato alla precisione numerica osservata. Non implicano, da soli, la conservazione della massa fisica per la PDE forzata con condizioni di Dirichlet dipendenti dal tempo. Nel seguito viene distinta la D-GCL dalla discrepanza degli incrementi di massa rispetto alla soluzione di riferimento.
+La verifica viene effettuata separando l'identità geometrica element-wise, il residuo algebrico assemblato, l'errore di free-stream e il residuo del sistema lineare. Nella verifica indipendente Stage E1 su una mesh strutturata $16\times16$ sono stati misurati un residuo geometrico nativo element-wise massimo $8.69\times10^{-17}$, un residuo algebrico in norma infinito $4.63\times10^{-16}$ e un errore free-stream in norma infinito $4.10\times10^{-13}$. Il residuo lineare è stato pari a $1.13\times10^{-12}$, contro una tolleranza GMRES effettiva registrata pari a $2.27\times10^{-11}$. Questi risultati riguardano il test indipendente E1 e non devono essere confusi con l'audit più ampio Stage D, nel cui log storico un test free-stream non superava una soglia più stretta di $10^{-12}$. I residui geometrici documentano la compatibilità della configurazione verificata; non implicano, da soli, la conservazione della massa fisica per la PDE forzata con condizioni di Dirichlet dipendenti dal tempo. La D-GCL viene pertanto distinta dalla discrepanza degli incrementi di massa e dal residuo integrale del bilancio PDE.
 
 \subsection{Implementazione numerica}
 

@@ -1,0 +1,156 @@
+\subsection{Domanda sperimentale e confronto controllato}
+
+La campagna F1 valuta se il mesh mover Stage D produce un vantaggio misurabile rispetto a tre strategie classiche di $r$-refinement quando topologia, numero di nodi, PDE, griglia temporale, solver ALE e filtro sono condivisi. Sono confrontate cinque strategie: Fixed FEM; monitor Winslow-type; monitor arc-length; monitor Hessian-based; GDM Stage D. Ogni metodo mobile mantiene 1089 nodi, 2048 triangoli e la connettività iniziale. Non sono presenti raffinamento $h$, coarsening o remeshing.
+
+\subsection{Controllori classici}
+
+I tre controllori classici sono realizzazioni discrete di tipo MMPDE basate sul funzionale variazionale di isotropia/equidistribuzione \citep{huang2001variational,huang1999moving}. A ogni finestra il monitor è costruito dal campo FEM numerico e mantenuto congelato durante la pseudo-evoluzione della mesh; viene aggiornato all'evento di adattamento successivo. Le metriche sono:
+\begin{align}
+G_{\mathrm{arc}}&=I+\alpha\nabla u_h\nabla u_h^T,\\
+G_{\mathrm{W}}&=\sqrt{\det(G_{\mathrm{arc}})}\,I,\\
+G_{\mathrm{H}}&=I+\alpha |H_h|,
+\end{align}
+dove $H_h$ è ricostruito ai nodi mediante least-squares pesato sui patch a due anelli a partire dai gradienti nodali numerici; non viene usato l'Hessiano elementare della funzione $P_1$, che è nullo all'interno di ciascun elemento. I monitor vengono simmetrizzati, proiettati su matrici definite positive, smussati e limitati secondo i parametri predefiniti. L'evoluzione pseudo-temporale usa un gradiente discreto del funzionale, precondizionamento con massa di riferimento lumped, nodi di bordo bloccati, line-search di Armijo e controlli sui determinanti.
+
+I parametri di intensità sono stati selezionati esclusivamente sulla validation: $\alpha_W=0.1$, $\alpha_{\mathrm{arc}}=0.025$ e $\alpha_H=0.005$. Il limite predefinito è di 200 iterazioni pseudo-temporali per evento. In 19/280 eventi Winslow, 2/280 eventi arc-length e 5/280 eventi Hessian-based è stato raggiunto il limite massimo; non sono state registrate line-search fallite e l'energia è risultata monotona negli eventi. Il raggiungimento del limite non viene interpretato come convergenza del problema MMPDE: questo aspetto limita la forza della comparazione e richiede un audit di sensibilità al budget iterativo prima della sottomissione.
+
+Queste baseline sono descritte come implementazioni MMPDE-type a gradiente discreto mass-lumped, non come discretizzazioni identiche a ogni formulazione MMPDE della letteratura. Il controller classico è implementato in NumPy/Python; il solver PDE è il medesimo core nativo C++/deal.II usato da GDM.
+
+\subsection{Errore \texorpdfstring{$L^2$}{L2} integrato: risultati held-out}
+
+L'endpoint primario è la media temporale dell'errore relativo $L^2$. La Tabella~\ref{tab:f1_errors} riporta le medie per split e sul totale. GDM presenta la media più bassa nelle tre coorti registrate. Nei 28 confronti appaiati, l'errore integrato di GDM è inferiore a quello di ciascuna baseline in tutti i casi.
+
+\begin{table*}[!t]
+\centering\small
+\caption{Errore relativo $L^2$ integrato medio per strategia e split nella campagna F1. Valori percentuali; il campione statistico è il caso PDE.}
+\label{tab:f1_errors}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrr}
+\toprule
+Strategia & Test interpolativo ($n=12$) & Test estrapolativo ($n=16$) & Totale ($n=28$)\\
+\midrule
+Fixed FEM & 8.729 & 12.060 & 10.633\\
+Winslow-type & 8.575 & 11.696 & 10.358\\
+Arc-length & 8.648 & 11.949 & 10.535\\
+Hessian-based & 8.699 & 11.987 & 10.578\\
+\textbf{GDM} & \textbf{8.043} & \textbf{11.172} & \textbf{9.831}\\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+La riduzione relativa appaiata è calcolata caso per caso come $R_b(c)$ nella Sezione~\ref{sec:protocollo}. La Tabella~\ref{tab:f1_paired} riporta media, intervallo bootstrap percentile al 95\%, numero di casi favorevoli e $p$-value Wilcoxon appaiato, corretto con Holm per la famiglia di 12 confronti (quattro baseline per tre coorti). Il bootstrap usa 20\,000 ricampionamenti appaiati dei casi con seed 1701.
+
+\begin{table*}[!t]
+\centering\small
+\caption{Riduzione relativa media dell'errore $L^2$ integrato di GDM rispetto alle baseline, sul totale dei 28 casi. IC bootstrap appaiato percentile al 95\%; $p$-value corretto con Holm per 12 confronti.}
+\label{tab:f1_paired}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr}
+\toprule
+Baseline & Riduzione [\%] & IC 95\% [\%] & Casi favorevoli & $p_{\mathrm{Holm}}$\\
+\midrule
+Fixed FEM & 8.038 & [7.590, 8.506] & 28/28 & $8.94\times10^{-8}$\\
+Winslow-type & 6.096 & [5.337, 6.859] & 28/28 & $8.94\times10^{-8}$\\
+Arc-length & 6.981 & [6.653, 7.334] & 28/28 & $8.94\times10^{-8}$\\
+Hessian-based & 7.805 & [7.197, 8.433] & 28/28 & $8.94\times10^{-8}$\\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+Nei due split separati, le riduzioni rispetto alla mesh fissa sono 7.99\% (12/12 casi) in interpolazione e 8.07\% (16/16) in estrapolazione; rispetto alle tre baseline classiche le riduzioni medie sono comprese tra 6.36\% e 7.70\% nel test interpolativo e tra 5.90\% e 7.89\% in quello estrapolativo. L'esito è coerente con il protocollo parametrico scelto, ma l'extrapolation split riguarda principalmente $\sigma$ fuori dall'intervallo di training e non rappresenta generalizzazione a una diversa PDE o topologia.
+
+Le metriche secondarie non mostrano un vantaggio uniforme in ogni norma: l'errore finale relativo $L^2$ e l'errore integrato in seminorma $H^1$ favoriscono mediamente GDM, mentre l'errore finale in seminorma $H^1$ non è migliore di Winslow in media. La rivendicazione primaria viene pertanto mantenuta sull'errore relativo $L^2$ integrato.
+
+\subsection{Qualità geometrica e filtro}
+
+La riduzione dell'errore è accompagnata da una qualità geometrica inferiore per GDM rispetto alle mesh classiche. La media sui casi del minimo di qualità di Escobar per traiettoria è 0.398 per GDM, contro 0.779--0.835 per i tre controllori classici; l'aspect ratio massimo registrato per GDM raggiunge 4.02, contro valori massimi compresi tra 1.50 e 1.78 per le baseline. Il minimo Jacobiano GDM si avvicina alla soglia configurata $10^{-4}$, mentre i minimi delle baseline classiche restano tra $7.81\times10^{-4}$ e $8.47\times10^{-4}$.
+
+\begin{table*}[!t]
+\centering\small
+\caption{Diagnostiche geometriche F1 aggregate sui 28 casi. ``Media del minimo Escobar'' è la media dei minimi per-caso; ``peggiore'' è il minimo globale tra i casi.}
+\label{tab:f1_geometry}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr}
+\toprule
+Strategia & $\min J$ & Media min. Escobar & Peggiore Escobar & Max aspect ratio\\
+\midrule
+Fixed FEM & $9.77\times10^{-4}$ & 0.866 & 0.866 & 1.394\\
+Winslow-type & $7.81\times10^{-4}$ & 0.823 & 0.814 & 1.514\\
+Arc-length & $8.03\times10^{-4}$ & 0.779 & 0.711 & 1.784\\
+Hessian-based & $8.43\times10^{-4}$ & 0.835 & 0.819 & 1.503\\
+GDM & $1.00\times10^{-4}$ & 0.398 & 0.324 & 4.016\\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+Non sono state registrate celle invertite o degeneri dopo il filtro. Tuttavia, il controllo finale della campagna ha contato 26 celle con determinante strettamente inferiore a $10^{-4}$ di scarti dell'ordine di $10^{-18}$, e il programma ha interrotto la finalizzazione perché il gate Python applicava una disuguaglianza stretta senza la tolleranza di arrotondamento del filtro nativo. Le 140 righe per-caso (28 casi per cinque strategie) e le 840 ripetizioni temporali sono presenti, ma il file di stato della campagna mantiene il valore `running`: la campagna non viene quindi dichiarata formalmente finalizzata. La discrepanza non indica inversione geometrica, ma deve essere chiusa con una regola numerica coerente e documentata prima della sottomissione.
+
+\subsection{Diagnostica del tracking su validation}
+
+Per chiarire se la mesh si redistribuisca effettivamente intorno alla struttura mobile, è stata eseguita una diagnostica indipendente su quattro casi validation selezionati deterministicamente lungo gli intervalli di $\sigma$ e $\beta$. L'analisi comprende 40 eventi di adattamento e 404 snapshot temporali; la soluzione esatta e il centro gaussiano sono usati esclusivamente per valutare a posteriori la distribuzione della mesh, non come input della GNN. La corona diagnostica è definita da $0.5\sigma\le r\le2\sigma$ rispetto al centro gaussiano mobile.
+
+La densità relativa degli elementi nella corona, normalizzata rispetto alla frazione geometrica occupata dalla corona, ha mediana 1.213: un arricchimento mediano del 21.3\%. Il rapporto di raffinamento lineare $h_{\mathrm{globale}}/h_{\mathrm{corona}}$ ha mediana 1.111. Il centroide della concentrazione di elementi non coincide con il centro gaussiano: la distanza normalizzata mediana è circa $0.49\sigma$ sull'intera traiettoria e $0.61\sigma$ agli istanti finali. I dati indicano quindi tracking effettivo ma non perfetto; non giustificano l'espressione ``mesh che segue esattamente il massimo''.
+
+Nelle stesse 40 finestre il filtro interviene in 32 eventi (80\%); la mediana di $\alpha$ è 0.423, il quinto percentile è $3.29\times10^{-6}$ e il rapporto aggregato tra norme degli spostamenti safe e raw è 0.481. Le proposte raw contengono celle invertite in 16 eventi; dopo il filtro non si osservano celle invertite o degeneri. Questa diagnostica è svolta su quattro casi validation e non viene aggregata con il test F1.
+
+\begin{figure*}[!t]
+\centering
+\IfFileExists{images/stage_f/mesh_source_tracking_summary.pdf}{%
+  \includegraphics[width=0.96\textwidth,height=0.38\textheight,keepaspectratio]{images/stage_f/mesh_source_tracking_summary.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_f/mesh_source_tracking_summary.pdf}
+  \end{minipage}}%
+}
+\caption{Tracking della regione gaussiana mobile su quattro casi validation Stage D: arricchimento locale della mesh e posizione del centro della sorgente. La figura è diagnostica e non costituisce un risultato held-out.}
+\label{fig:f1_tracking_summary}
+\end{figure*}
+\begin{figure*}[!t]
+\centering
+\IfFileExists{images/stage_f/mesh_source_tracking_case_00054.pdf}{%
+  \includegraphics[width=0.96\textwidth,height=0.42\textheight,keepaspectratio]{images/stage_f/mesh_source_tracking_case_00054.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_f/mesh_source_tracking_case_00054.pdf}
+  \end{minipage}}%
+}
+\caption{Evoluzione della mesh e del campo numerico nel caso validation \texttt{stage\_d\_00054}. Il centro gaussiano e la corona di valutazione sono usati soltanto per la diagnostica a posteriori.}
+\label{fig:f1_tracking_case}
+\end{figure*}
+\begin{figure}[!htbp]
+\centering
+\IfFileExists{images/stage_f/safety_filter_diagnostics.pdf}{%
+  \includegraphics[width=0.95\columnwidth,height=0.30\textheight,keepaspectratio]{images/stage_f/safety_filter_diagnostics.pdf}%
+}{%
+  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
+  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
+  \scriptsize\nolinkurl{images/stage_f/safety_filter_diagnostics.pdf}
+  \end{minipage}}%
+}
+\caption{Distribuzione dei fattori globali $\alpha$ e diagnostiche raw/safe del filtro su 40 eventi validation.}
+\label{fig:f1_safety_diagnostics}
+\end{figure}
+
+\subsection{Costo computazionale}
+
+Il tempo totale mediano per traiettoria, calcolato come mediana delle cinque ripetizioni misurate per caso e successiva mediana sui 28 casi, è 0.117 s per Fixed FEM e 1.474 s per GDM. I controller MMPDE NumPy/Python richiedono tempi mediani maggiori: 6.728 s per arc-length, 9.603 s per Hessian e 12.356 s per Winslow. GDM risulta quindi più rapido delle implementazioni classiche utilizzate in questa campagna, ma circa 12.6 volte più lento della mesh fissa. Non è corretto interpretare questo risultato come superiorità algoritmica generale dei metodi neurali: i controller classici sono prototipi Python/NumPy, mentre GDM usa inferenza PyTorch; il costo di training offline non è incluso.
+
+\begin{table}[H]
+\centering\small
+\caption{Tempo online totale per traiettoria nella campagna F1. Per ogni caso si usa la mediana delle cinque ripetizioni; la tabella riporta la mediana sui 28 casi. Un warm-up per caso/metodo è escluso.}
+\label{tab:f1_runtime}
+\begin{tabular}{lrr}
+\toprule
+Strategia & Tempo mediano [s] & Rapporto vs Fixed\\
+\midrule
+Fixed FEM & 0.117 & $1.00\times$\\
+GDM & 1.474 & $12.59\times$\\
+Arc-length & 6.728 & $57.49\times$\\
+Hessian-based & 9.603 & $82.07\times$\\
+Winslow-type & 12.356 & $105.58\times$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Interpretazione F1}
+
+Nel protocollo registrato, GDM riduce l'errore relativo $L^2$ integrato rispetto alla mesh fissa e alle tre baseline classiche in tutti i 28 casi. La persistenza del segno nei due split è un'evidenza favorevole per la specifica famiglia MMS. La lettura deve tuttavia considerare tre limitazioni: (i) la finalizzazione automatica è stata interrotta da un controllo floating-point troppo stretto rispetto al filtro nativo; (ii) 26 eventi MMPDE hanno raggiunto il limite di 200 iterazioni, pur con energia monotona e senza fallimenti di line-search; (iii) la mesh GDM presenta qualità geometrica peggiore e un costo superiore alla mesh fissa. Di conseguenza, F1 fornisce una comparazione quantitativa promettente, ma non chiude ancora l'audit di convergenza delle baseline né la validazione completa della soglia di sicurezza.

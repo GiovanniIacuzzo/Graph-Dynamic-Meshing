@@ -1,9 +1,8 @@
 \documentclass[10pt,a4paper,twocolumn]{article}
 
-% ------------------------------------------------------------------
-% Impostazione editoriale
-% ------------------------------------------------------------------
-\usepackage[top=1.85cm,bottom=1.9cm,left=1.72cm,right=1.72cm,columnsep=0.62cm]{geometry}
+% Impaginazione a due colonne: margini leggibili per un manoscritto scientifico A4.
+\usepackage[top=1.75cm,bottom=1.75cm,left=1.65cm,right=1.65cm]{geometry}
+\setlength{\columnsep}{0.62cm}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[italian]{babel}
@@ -13,26 +12,41 @@
 \usepackage{amsmath,mathtools,bm}
 \usepackage{booktabs,tabularx,multirow,array}
 \usepackage{graphicx}
-\usepackage{caption}
-\usepackage{subcaption}
+\usepackage{caption,subcaption}
 \usepackage{float}
 \usepackage{placeins}
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
+\usepackage{xurl}
 \usepackage[colorlinks=true,linkcolor=blue!55!black,citecolor=blue!55!black,urlcolor=blue!55!black]{hyperref}
 \usepackage[nameinlink,noabbrev]{cleveref}
-\hypersetup{pdftitle={Adattività dinamica di mesh guidata da reti neurali su grafi per PDE transitorie},pdfauthor={Giovanni Giuseppe Iacuzzo},pdfsubject={Seconda bozza scientifica GDM}}
 
-\graphicspath{{images/}{images/stage_a/}{images/stage_b/}{images/stage_c/}{images/stage_d/}{images/appendix/}}
+\hypersetup{
+  pdftitle={Graph Dynamic Meshing: rilocazione neurale a topologia fissa per PDE transitorie},
+  pdfauthor={Giovanni Giuseppe Iacuzzo},
+  pdfsubject={Rilocazione neurale di mesh, FEM-ALE, verifica geometrica e r-adattività classica}
+}
+\graphicspath{{images/}{images/stage_a/}{images/stage_b/}{images/stage_c/}{images/stage_d/}{images/stage_e/}{images/stage_f/}{images/appendix/}}
 
-\setlength{\parskip}{0.12em}
+\setlength{\parskip}{0.08em}
 \setlength{\parindent}{1em}
-\setlist[itemize]{leftmargin=1.2em,itemsep=0.15em,topsep=0.2em}
-\setlist[enumerate]{leftmargin=1.35em,itemsep=0.2em,topsep=0.2em}
-\captionsetup{font=small,labelfont=bf}
-\renewcommand{\arraystretch}{1.12}
+\setlist[itemize]{leftmargin=1.2em,itemsep=0.12em,topsep=0.2em}
+\setlist[enumerate]{leftmargin=1.35em,itemsep=0.15em,topsep=0.2em}
+\captionsetup{font=footnotesize,labelfont=bf}
+\renewcommand{\arraystretch}{1.08}
 \allowdisplaybreaks
+
+% Politica dei float per il layout a due colonne. Le singole figure specificano
+% comunque localmente ambiente, larghezza e posizione; non esiste una macro comune.
+\setcounter{topnumber}{3}
+\setcounter{dbltopnumber}{2}
+\setcounter{totalnumber}{5}
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\dbltopfraction}{0.92}
+\renewcommand{\textfraction}{0.06}
+\renewcommand{\floatpagefraction}{0.78}
+\renewcommand{\dblfloatpagefraction}{0.78}
 
 \newtheorem{definition}{Definizione}
 \newtheorem{proposition}{Proposizione}
@@ -50,86 +64,59 @@
 \newcommand{\GNN}{\textsc{GNN}}
 \newcommand{\ALE}{\textsc{ALE}}
 \newcommand{\DGC}{\textsc{D-GCL}}
-\newcommand{\Pone}{$P_1$}
-\newcommand{\Ltwo}{$L^2$}
 
-\newcommand{\gdmfigure}[4][1.0\linewidth]{%
-\begin{figure}[H]
-\centering
-\IfFileExists{#2}{\includegraphics[width=#1,keepaspectratio]{#2}}{%
-\fbox{\begin{minipage}[c][0.17\textheight][c]{1.0\linewidth}
-\centering\small\textbf{Figura non ancora copiata}\\[0.5em]
-\footnotesize Copiare il PDF indicato in \texttt{FIGURE\_MAP.md}.
-\end{minipage}}}
-\caption{#3}\label{#4}
-\end{figure}}
-\newcommand{\gdmfigurewide}[4][0.7\textwidth]{%
-\begin{figure*}[!htbp]
-\centering
-\IfFileExists{#2}{\includegraphics[width=#1,keepaspectratio]{#2}}{%
-\fbox{\begin{minipage}[c][0.14\textheight][c]{0.7\textwidth}
-\centering\small\textbf{Figura non ancora copiata}\\[0.5em]
-\footnotesize Copiare il PDF indicato in \texttt{FIGURE\_MAP.md}.
-\end{minipage}}}
-\caption{#3}\label{#4}
-\end{figure*}}
-
-\title{\bfseries Adattività dinamica di mesh guidata da reti neurali su grafi per PDE transitorie\\[0.35em]
-\large Un framework di rilocazione nodale con filtro geometrico deterministico e integrazione ALE}
-\author{
-Giovanni Giuseppe Iacuzzo\\
+\title{\bfseries Graph Dynamic Meshing: rilocazione neurale a topologia fissa per PDE transitorie\\[0.35em]
+\large Verifica geometrica lungo il percorso, integrazione ALE e confronto con metodi classici di $r$-adattività}
+\author{Giovanni Giuseppe Iacuzzo\\
 \small Dipartimento di Ingegneria e Architettura, Università degli Studi di Enna ``Kore'', Enna, Italia\\
-\small \texttt{giovanni.iacuzzo@unikore.it}
-}
-
+\small \texttt{giovanni.iacuzzo@unikore.it}}
+\date{31 ottobre 2026}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-La rilocazione adattiva dei nodi di una mesh (\emph{$r$-adaptation}) consente di redistribuire i gradi di libertà esistenti in prossimità di strutture spaziali localizzate, senza modificare il numero di nodi o la connettività della discretizzazione. Nei problemi evolutivi, tuttavia, la qualità di una strategia di movimento non può essere giudicata soltanto attraverso un funzionale geometrico o di interpolazione: occorre considerare anche il trasferimento dello stato discreto, la validità degli elementi lungo il moto, la compatibilità geometrico-temporale della formulazione e l'errore della soluzione della PDE. Questo lavoro presenta \emph{Graph Dynamic Meshing} (\GDM), un framework per la rilocazione nodale bidimensionale che combina una rete neurale su grafi, un filtro deterministico di sicurezza geometrica e un solutore agli elementi finiti nativo basato su C++/deal.II. La mesh mantiene la propria topologia; il movimento viene applicato mediante una traiettoria nodale controllata e, nella campagna principale, accoppiato a una formulazione Arbitrary Lagrangian--Eulerian (\ALE) senza remapping esplicito dello stato.
+La $r$-adattività redistribuisce i gradi di libertà esistenti mediante lo spostamento dei nodi, mantenendo invariata la connettività della mesh. In problemi transitori, una strategia di rilocazione deve essere valutata congiuntamente rispetto all'errore della soluzione discreta, alla validità geometrica lungo il moto, alla formulazione ALE e al costo end-to-end. Questo lavoro presenta Graph Dynamic Meshing (GDM), una pipeline per la rilocazione bidimensionale a topologia fissa che combina una rete neurale su grafi, un filtro geometrico deterministico basato sull'analisi del Jacobiano lungo il segmento di spostamento e un solutore FEM--ALE nativo C++/deal.II. La valutazione è progressiva: le campagne A--D studiano target statici e temporali, trasferimento dello stato e accuratezza PDE; la campagna E1 verifica il solver, la convergenza temporale, la distribuzione locale del numero di Péclet e la D-GCL; la campagna F1 confronta GDM con tre controllori classici di $r$-refinement a parità di topologia, gradi di libertà, passo temporale e solver.
 
-La metodologia è valutata attraverso campagne progressive. La prima campagna studia la predizione di spostamenti per campi gaussiani e utilizza riferimenti numerici a budget finito, non ottimi certificati. Le campagne successive isolano il comportamento dei trasferimenti $P_1$ e $L^2$ e verificano il solutore ALE e la \emph{Discrete Geometric Conservation Law} (\DGC). La valutazione end-to-end principale considera 28 casi held-out di un problema transiente di convezione--diffusione con soluzione manufatta, distinti in 12 casi interpolativi e 16 estrapolativi. Rispetto alla mesh fissa, la pipeline \GDM{} trajectory-aware riduce l'errore relativo medio integrato in norma $L^2$ dell'8,04\% (IC bootstrap appaiato al 95\%: 7,59--8,51\%) e l'errore finale dell'8,26\% (7,54--9,05\%); il miglioramento in norma $L^2$ si osserva in tutti i 28 casi. Il costo computazionale mediano è tuttavia circa 8,11 volte quello della soluzione su mesh fissa e il filtro geometrico interviene nel 75,4\% delle finestre di adattamento. I risultati forniscono quindi evidenza favorevole, ma circoscritta, sull'accuratezza della pipeline trajectory-aware per la famiglia di problemi considerata; non dimostrano un vantaggio computazionale né una generalizzazione a PDE, geometrie o risoluzioni differenti.
+Nel benchmark F1, su 28 casi held-out (12 interpolativi e 16 estrapolativi), l'errore relativo $L^2$ integrato medio è 9.831\% per GDM, contro 10.633\% per mesh fissa, 10.358\% per Winslow, 10.535\% per arc-length e 10.578\% per Hessian-based. La riduzione relativa media appaiata di GDM è compresa tra 6.10\% e 8.04\% rispetto alle quattro strategie di riferimento; il segno del miglioramento è coerente in tutti i 28 casi per l'endpoint primario. Questi dati sono tuttavia da considerare preliminari rispetto alla chiusura dell'audit: 26 conteggi di celle appena sotto la soglia assoluta del Jacobiano sono dovuti a scarti di arrotondamento dell'ordine di $10^{-18}$, e alcune ottimizzazioni MMPDE raggiungono il limite prefissato di iterazioni. La diagnostica del tracking, condotta separatamente su quattro casi di validation, mostra un arricchimento mediano della densità di elementi del 21.3\% nella corona attorno al centro gaussiano mobile; il filtro interviene in 32 dei 40 eventi analizzati e conserva, in rapporto aggregato, il 48.1\% della norma degli spostamenti proposti.
+
+Il lavoro non rivendica una superiorità generale delle reti neurali per il movimento di mesh, né un vantaggio di costo rispetto alla mesh fissa. I risultati supportano un miglioramento di accuratezza nel problema manufatto e nel protocollo esaminati, a fronte di un costo online maggiore e di un compromesso geometrico che richiede ulteriore caratterizzazione.
 \end{abstract}
 
-\vspace{0.2em}
-\noindent\textbf{Parole chiave:} $r$-adattività; rilocazione di mesh; reti neurali su grafi; elementi finiti; ALE; legge geometrica di conservazione discreta; convezione--diffusione.
+\noindent\textbf{Parole chiave:} $r$-adattività; rilocazione di mesh; reti neurali su grafi; elementi finiti; ALE; D-GCL; convezione--diffusione; mesh movement.
 
-\section{Introduzione}
-\label{sec:introduzione}
+\section{Introduzione}\label{sec:introduzione}
 \input{sections/01_introduzione.tex}
 
-\section{Problema modello e discretizzazione numerica}
-\label{sec:problema}
+\section{Problema modello e discretizzazione numerica}\label{sec:problema}
 \input{sections/02_problema.tex}
 
-\section{Il framework Graph Dynamic Meshing}
-\label{sec:framework}
+\section{Il framework Graph Dynamic Meshing}\label{sec:framework}
 \input{sections/03_framework.tex}
 
-\section{Movimento della mesh, trasferimento dello stato e formulazione ALE}
-\label{sec:ale}
+\section{Movimento della mesh e formulazione ALE}\label{sec:ale}
 \input{sections/04_ale.tex}
 
-\section{Disegno sperimentale e protocollo di valutazione}
-\label{sec:protocollo}
+\section{Disegno sperimentale e protocollo}\label{sec:protocollo}
 \input{sections/05_protocollo.tex}
 
-\section{Risultati delle campagne preliminari: Stage A--C}
-\label{sec:stageabc}
+\section{Campagne preliminari A--C: target, trasferimenti e GNN statica}\label{sec:stageabc}
 \input{sections/06_stage_abc.tex}
 
-\section{Valutazione end-to-end trajectory-aware: Stage D}
-\label{sec:staged}
+\section{Benchmark PDE trajectory-aware: Stage D}\label{sec:staged}
 \input{sections/07_stage_d.tex}
 
-\section{Discussione, limiti e implicazioni}
-\label{sec:discussione}
-\input{sections/08_discussione.tex}
+\section{Verifica del solutore e caratterizzazione numerica: Stage E1}\label{sec:stagee}
+\input{sections/10_stage_e1.tex}
 
-\section{Conclusioni}
-\label{sec:conclusioni}
-\input{sections/09_conclusioni.tex}
+\section{Confronto con \texorpdfstring{$r$-refinement}{r-refinement} classico: Stage F1}\label{sec:stagef}
+\input{sections/11_stage_f1.tex}
+
+\section{Discussione e limiti}\label{sec:discussione}
+\input{sections/12_discussione.tex}
+
+\section{Conclusioni}\label{sec:conclusioni}
+\input{sections/13_conclusioni.tex}
 
 \bibliographystyle{plainnat}
 \renewcommand{\refname}{Bibliografia}
@@ -141,6 +128,5 @@ La metodologia è valutata attraverso campagne progressive. La prima campagna st
 \input{appendices/B_architettura_training.tex}
 \input{appendices/C_remapping_stagebc.tex}
 \input{appendices/D_diagnostiche_staged.tex}
-\input{appendices/E_self_supervised.tex}
-
+\input{appendices/F_dettagli_stage_ef.tex}
 \end{document}

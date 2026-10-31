@@ -74,7 +74,7 @@ La formulazione debole Euleriana di Galerkin, per funzioni test $v_h$ che rispet
 =(f,v_h)_\Omega.
 \label{eq:weak_eulerian}
 \end{equation}
-L'integrazione temporale di riferimento è il metodo di Eulero implicito, corrispondente a $\theta=1$, con passo costante $\Delta t=0.005$ e $N_t=100$ passi nell'intervallo $[0,0.5]$. La discretizzazione spaziale è $P_1$. L'ispezione del nucleo C++ impiegato nelle campagne conferma l'assemblaggio Galerkin standard dei termini di massa, convezione e diffusione; non è presente un addendo SUPG nell'assemblaggio Euleriano né in quello ALE. Una chiave \texttt{use\_supg} presente in alcuni YAML non è consumata dal core numerico e non viene quindi interpretata come una stabilizzazione effettivamente attiva.
+L'integrazione temporale di riferimento è il metodo di Eulero implicito, corrispondente a $\theta=1$, con passo costante $\Delta t=0.005$ e $N_t=100$ passi nell'intervallo $[0,0.5]$. La discretizzazione spaziale è $P_1$. La configurazione usata nei benchmark PDE principali (Stage D e F1) è Galerkin standard. Nel core C++ è stata successivamente introdotta un'opzione SUPG selezionabile anche nel percorso ALE; la sua disponibilità non implica che sia stata attivata nelle campagne D e F1. La campagna E1 ne confronta separatamente la variante Galerkin e quella SUPG. Il parametro di stabilizzazione e il residuo forte sono documentati nell'Appendice~\ref{app:stageef}; i risultati disponibili non mostrano un miglioramento dell'errore per il caso MMS testato e non giustificano l'uso di SUPG come default.
 
 \subsection{Metriche di errore}
 
