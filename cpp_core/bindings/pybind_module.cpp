@@ -168,7 +168,17 @@ PYBIND11_MODULE(_gdm_core, m) {
         .def_readwrite("gmres_krylov_dim", &LinearSolverParameters::gmres_krylov_dim)
         .def_readwrite("ssor_omega", &LinearSolverParameters::ssor_omega)
         .def_readwrite("use_direct_solver", &LinearSolverParameters::use_direct_solver)
+        .def_readwrite("right_preconditioning", &LinearSolverParameters::right_preconditioning)
+        .def_readwrite("ale_rhs_norm_floor", &LinearSolverParameters::ale_rhs_norm_floor)
         .def("validate", &LinearSolverParameters::validate);
+
+    py::class_<StabilizationParameters>(m, "StabilizationParameters")
+        .def(py::init<>())
+        .def_readwrite("use_supg", &StabilizationParameters::use_supg)
+        .def_readwrite("c_time", &StabilizationParameters::c_time)
+        .def_readwrite("c_advection", &StabilizationParameters::c_advection)
+        .def_readwrite("c_diffusion", &StabilizationParameters::c_diffusion)
+        .def("validate", &StabilizationParameters::validate);
 
     py::class_<MeshState>(m, "MeshState")
         .def(py::init([](const py::array_t<double, py::array::c_style | py::array::forcecast>& nodes,
@@ -301,10 +311,12 @@ PYBIND11_MODULE(_gdm_core, m) {
              py::arg("x"), py::arg("y"), py::arg("t"));
 
     py::class_<ConvectionDiffusionFEM2D>(m, "ConvectionDiffusionFEM2D", py::dynamic_attr())
-        .def(py::init<const MeshState&, const ManufacturedConvectionDiffusion2D&, const LinearSolverParameters&>(),
+        .def(py::init<const MeshState&, const ManufacturedConvectionDiffusion2D&,
+                      const LinearSolverParameters&, const StabilizationParameters&>(),
              py::arg("mesh"),
              py::arg("pde"),
              py::arg("solver_params") = LinearSolverParameters{},
+             py::arg("stabilization_params") = StabilizationParameters{},
              py::keep_alive<1, 2>())
         .def("rebuild_for_mesh",
              [](py::object self_obj, py::object mesh_obj) {
@@ -336,6 +348,31 @@ PYBIND11_MODULE(_gdm_core, m) {
              py::arg("u_n"),
              py::arg("dt"),
              py::arg("t_next"))
+        .def("step_backward_euler_with_diagnostics",
+             [](const ConvectionDiffusionFEM2D& self,
+                const py::array_t<double, py::array::c_style | py::array::forcecast>& u_n,
+                double dt,
+                double t_next) {
+                 auto u_vec = array_to_scalar_vec(u_n, "u_n");
+                 std::vector<double> u_next;
+                 double residual = 0.0, assembly_seconds = 0.0, solve_seconds = 0.0;
+                 double rhs_norm = 0.0, solver_tolerance = 0.0;
+                 {
+                     py::gil_scoped_release release;
+                     u_next = self.step_backward_euler(
+                         u_vec, dt, t_next, &residual, &assembly_seconds, &solve_seconds,
+                         &rhs_norm, &solver_tolerance);
+                 }
+                 py::dict result;
+                 result["u_next"] = scalar_vec_to_array(u_next);
+                 result["linear_solver_residual"] = residual;
+                 result["assembly_seconds"] = assembly_seconds;
+                 result["solve_seconds"] = solve_seconds;
+                 result["linear_solver_rhs_norm"] = rhs_norm;
+                 result["linear_solver_tolerance"] = solver_tolerance;
+                 return result;
+             },
+             py::arg("u_n"), py::arg("dt"), py::arg("t_next"))
         .def("compute_discrete_mass",
              [](const ConvectionDiffusionFEM2D& self,
                 const py::array_t<double, py::array::c_style | py::array::forcecast>& u) {
@@ -351,15 +388,20 @@ PYBIND11_MODULE(_gdm_core, m) {
         .def_readonly("dual_c_mesh_col_sum_linf", &ALEDiagnostics::dual_c_mesh_col_sum_linf)
         .def_readonly("discrete_mass_n", &ALEDiagnostics::discrete_mass_n)
         .def_readonly("discrete_mass_next", &ALEDiagnostics::discrete_mass_next)
-        .def_readonly("linear_solver_residual", &ALEDiagnostics::linear_solver_residual);
+        .def_readonly("linear_solver_residual", &ALEDiagnostics::linear_solver_residual)
+        .def_readonly("linear_solver_rhs_norm", &ALEDiagnostics::linear_solver_rhs_norm)
+        .def_readonly("linear_solver_tolerance", &ALEDiagnostics::linear_solver_tolerance)
+        .def_readonly("element_gcl_residuals", &ALEDiagnostics::element_gcl_residuals);
 
     py::class_<ALESolver2D>(m, "ALESolver2D")
-        .def(py::init<const ManufacturedConvectionDiffusion2D*, double, double, double, const LinearSolverParameters&>(),
+        .def(py::init<const ManufacturedConvectionDiffusion2D*, double, double, double,
+                      const LinearSolverParameters&, const StabilizationParameters&>(),
              py::arg("pde") = nullptr,
              py::arg("nu") = 1.0e-3,
              py::arg("bx") = 0.4,
              py::arg("by") = 0.2,
              py::arg("solver_params") = LinearSolverParameters{},
+             py::arg("stabilization_params") = StabilizationParameters{},
              py::keep_alive<1, 2>())
         .def("step_ale",
              [](const ALESolver2D& self,

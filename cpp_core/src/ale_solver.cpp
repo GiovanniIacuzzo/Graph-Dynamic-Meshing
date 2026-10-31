@@ -24,19 +24,48 @@ constexpr std::array<std::array<double, 3>, 3> kBaseRefMass = {{
     {1.0 / 12.0, 1.0 / 12.0, 2.0 / 12.0}
 }};
 
+// Exact minimum of the signed affine-triangle Jacobian determinant along
+// X(s)=X_n+s(X_{n+1}-X_n), s in [0,1]. The determinant is quadratic.
+double minimum_det_on_linear_path(
+    const MeshState::Coord2D& x0, const MeshState::Coord2D& x1, const MeshState::Coord2D& x2,
+    const MeshState::Coord2D& y0, const MeshState::Coord2D& y1, const MeshState::Coord2D& y2) {
+    const std::array<double, 2> e10 = {x1[0] - x0[0], x1[1] - x0[1]};
+    const std::array<double, 2> e20 = {x2[0] - x0[0], x2[1] - x0[1]};
+    const std::array<double, 2> de1 = {(y1[0] - y0[0]) - e10[0], (y1[1] - y0[1]) - e10[1]};
+    const std::array<double, 2> de2 = {(y2[0] - y0[0]) - e20[0], (y2[1] - y0[1]) - e20[1]};
+    const auto cross = [](const std::array<double, 2>& a, const std::array<double, 2>& b) {
+        return a[0] * b[1] - a[1] * b[0];
+    };
+    const double c0 = cross(e10, e20);
+    const double c1 = cross(de1, e20) + cross(e10, de2);
+    const double c2 = cross(de1, de2);
+    auto det = [&](double s) { return c0 + c1 * s + c2 * s * s; };
+    double minimum = std::min(det(0.0), det(1.0));
+    if (c2 != 0.0 && std::isfinite(c2)) {
+        const double critical = -c1 / (2.0 * c2);
+        if (critical > 0.0 && critical < 1.0) {
+            minimum = std::min(minimum, det(critical));
+        }
+    }
+    return minimum;
+}
+
 } // namespace
 
 ALESolver2D::ALESolver2D(const ManufacturedConvectionDiffusion2D* pde,
                          double nu,
                          double bx,
                          double by,
-                         const LinearSolverParameters& solver_params)
+                         const LinearSolverParameters& solver_params,
+                         const StabilizationParameters& stabilization_params)
     : pde_(pde),
       nu_(nu),
       b_{bx, by},
       solver_params_(solver_params),
+      stabilization_params_(stabilization_params),
       quadrature_(create_dunavant_degree5_quadrature()) {
     solver_params_.validate();
+    stabilization_params_.validate();
     if (pde_ != nullptr) {
         nu_ = pde_->nu();
         b_ = pde_->velocity();
@@ -143,6 +172,16 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
             mesh_next.py_node_to_dof(py_idx[2])
         };
 
+        // Reject a triangle that becomes degenerate/inverted at any intermediate
+        // point of the linear nodal trajectory, even if both endpoint meshes are valid.
+        const double min_det_path = minimum_det_on_linear_path(
+            nodes_n[py_idx[0]], nodes_n[py_idx[1]], nodes_n[py_idx[2]],
+            nodes_next[py_idx[0]], nodes_next[py_idx[1]], nodes_next[py_idx[2]]);
+        if (!std::isfinite(min_det_path) || min_det_path <= 1.0e-15) {
+            throw std::runtime_error(
+                "step_ale: la traiettoria nodale lineare deforma un elemento fino a degenerazione/inversione.");
+        }
+
         // 1. Geometria al punto medio X^{n+1/2}
         const double x1_m = 0.5 * (nodes_n[py_idx[0]][0] + nodes_next[py_idx[0]][0]);
         const double y1_m = 0.5 * (nodes_n[py_idx[0]][1] + nodes_next[py_idx[0]][1]);
@@ -152,7 +191,11 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
         const double y3_m = 0.5 * (nodes_n[py_idx[2]][1] + nodes_next[py_idx[2]][1]);
 
         const double det_j_mid = (x2_m - x1_m) * (y3_m - y1_m) - (x3_m - x1_m) * (y2_m - y1_m);
-        const double area_mid = 0.5 * std::abs(det_j_mid);
+        if (!std::isfinite(det_j_mid) || det_j_mid <= 1.0e-15) {
+            throw std::runtime_error(
+                "step_ale: traiettoria lineare della mesh degenere o invertita al punto medio.");
+        }
+        const double area_mid = 0.5 * det_j_mid;
         const double inv_det_m = 1.0 / det_j_mid;
 
         const std::array<double, 3> dphi_dx_m = {
@@ -172,7 +215,7 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
         const double x3_p = nodes_next[py_idx[2]][0], y3_p = nodes_next[py_idx[2]][1];
 
         const double det_j_p = (x2_p - x1_p) * (y3_p - y1_p) - (x3_p - x1_p) * (y2_p - y1_p);
-        const double area_next = 0.5 * std::abs(det_j_p);
+        const double area_next = 0.5 * det_j_p;
         const double inv_det_p = 1.0 / det_j_p;
 
         const std::array<double, 3> dphi_dx_p = {
@@ -187,7 +230,7 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
         const double x2_n = nodes_n[py_idx[1]][0], y2_n = nodes_n[py_idx[1]][1];
         const double x3_n = nodes_n[py_idx[2]][0], y3_n = nodes_n[py_idx[2]][1];
         const double det_j_n = (x2_n - x1_n) * (y3_n - y1_n) - (x3_n - x1_n) * (y2_n - y1_n);
-        const double area_n = 0.5 * std::abs(det_j_n);
+        const double area_n = 0.5 * det_j_n;
 
         // Residuo geometrico elementare D-GCL
         const double r_elem = std::abs((area_next - area_n) / dt - area_mid * div_w);
@@ -217,7 +260,9 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
         // 5. Termini fisici su t^{n+1}
         std::array<std::array<double, 3>, 3> C_phys_e{{{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}};
         std::array<std::array<double, 3>, 3> K_e{{{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}};
+        std::array<std::array<double, 3>, 3> SUPG_e{{{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}};
         std::array<double, 3> F_e = {0.0, 0.0, 0.0};
+        std::array<double, 3> F_SUPG_e = {0.0, 0.0, 0.0};
 
         if (!pure_gcl) {
             for (std::size_t q = 0; q < n_q; ++q) {
@@ -251,10 +296,72 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
                     }
                 }
             }
+
+            // SUPG residual reconstructed from the same conservative ALE step
+            // assembled below. The residual is normalized by J_mid and tested
+            // with beta=(b-w) at t^{n+1/2}; multiplying by J_mid recovers
+            // exactly the temporal mass difference, mesh-flux and physical
+            // terms of the Galerkin operator. For affine P1, Delta_x u_h=0
+            // elementwise, so no element-interior strong diffusion term occurs.
+            if (stabilization_params_.use_supg) {
+                const std::array<std::array<double, 2>, 3> grad_mid = {{
+                    {dphi_dx_m[0], dphi_dy_m[0]},
+                    {dphi_dx_m[1], dphi_dy_m[1]},
+                    {dphi_dx_m[2], dphi_dy_m[2]}
+                }};
+                const std::array<std::array<double, 2>, 3> vertices_mid = {{
+                    {x1_m, y1_m}, {x2_m, y2_m}, {x3_m, y3_m}
+                }};
+                const std::array<double, 2> w_center = {
+                    (w_nodes[py_idx[0]][0] + w_nodes[py_idx[1]][0] + w_nodes[py_idx[2]][0]) / 3.0,
+                    (w_nodes[py_idx[0]][1] + w_nodes[py_idx[1]][1] + w_nodes[py_idx[2]][1]) / 3.0
+                };
+                const std::array<double, 2> beta_center = {b_[0] - w_center[0], b_[1] - w_center[1]};
+                const double beta_speed = std::hypot(beta_center[0], beta_center[1]);
+                const double h_beta = directional_element_length(grad_mid, beta_center, vertices_mid);
+                const double tau = supg_tau(dt, beta_speed, h_beta, nu_, stabilization_params_);
+                const double ratio_next = area_next / area_mid;
+                const double ratio_n = area_n / area_mid;
+
+                for (std::size_t q = 0; q < n_q; ++q) {
+                    const double xi = q_pts[q][0];
+                    const double eta = q_pts[q][1];
+                    const std::array<double, 3> phi = {1.0 - xi - eta, xi, eta};
+                    const double jxw_mid = (2.0 * q_wts[q]) * area_mid;
+                    const double wx_q = phi[0] * w_nodes[py_idx[0]][0] + phi[1] * w_nodes[py_idx[1]][0] + phi[2] * w_nodes[py_idx[2]][0];
+                    const double wy_q = phi[0] * w_nodes[py_idx[0]][1] + phi[1] * w_nodes[py_idx[1]][1] + phi[2] * w_nodes[py_idx[2]][1];
+                    const double beta_x_q = b_[0] - wx_q;
+                    const double beta_y_q = b_[1] - wy_q;
+                    const double xq = phi[0] * x1_p + phi[1] * x2_p + phi[2] * x3_p;
+                    const double yq = phi[0] * y1_p + phi[1] * y2_p + phi[2] * y3_p;
+                    const double forcing_q = (pde_ != nullptr)
+                        ? pde_->evaluate_forcing(xq, yq, t_next) : 0.0;
+                    const double u_n_q = phi[0] * u_n[py_idx[0]] +
+                                         phi[1] * u_n[py_idx[1]] +
+                                         phi[2] * u_n[py_idx[2]];
+                    const double old_and_forcing = ratio_n * u_n_q / dt + ratio_next * forcing_q;
+
+                    for (int i = 0; i < 3; ++i) {
+                        // The streamline test is evaluated on the midpoint geometry,
+                        // consistently with the midpoint ALE mesh-flux operator.
+                        const double streamline_test = beta_x_q * dphi_dx_m[i] + beta_y_q * dphi_dy_m[i];
+                        F_SUPG_e[i] += tau * old_and_forcing * streamline_test * jxw_mid;
+                        for (int j = 0; j < 3; ++j) {
+                            // C_mesh uses midpoint gradients; physical convection is assembled at n+1.
+                            const double w_grad_j = wx_q * dphi_dx_m[j] + wy_q * dphi_dy_m[j];
+                            const double b_grad_j = b_[0] * dphi_dx_p[j] + b_[1] * dphi_dy_p[j];
+                            const double residual_trial = ratio_next * phi[j] / dt -
+                                                          w_grad_j - phi[j] * div_w +
+                                                          ratio_next * b_grad_j;
+                            SUPG_e[i][j] += tau * residual_trial * streamline_test * jxw_mid;
+                        }
+                    }
+                }
+            }
         }
 
         for (int i = 0; i < 3; ++i) {
-            F_vec[dofs[i]] += F_e[i];
+            F_vec[dofs[i]] += F_e[i] + F_SUPG_e[i];
             for (int j = 0; j < 3; ++j) {
                 const double m_next_ij = area_next * kBaseRefMass[i][j];
                 const double m_n_ij = area_n * kBaseRefMass[i][j];
@@ -266,7 +373,7 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
                 M_next_mat.add(dofs[i], dofs[j], m_next_ij);
                 M_n_mat.add(dofs[i], dofs[j], m_n_ij);
                 C_mesh_mat.add(dofs[i], dofs[j], c_mesh_ij);
-                A_mat.add(dofs[i], dofs[j], a_ij);
+                A_mat.add(dofs[i], dofs[j], a_ij + SUPG_e[i][j]);
             }
         }
     }
@@ -313,20 +420,28 @@ ALEStepResult ALESolver2D::step_ale(const MeshState& mesh_n,
             }
         }
         dealii::MatrixTools::apply_boundary_values(
-            boundary_values, A_mat, u_next_deal, rhs, false);
+            boundary_values, A_mat, u_next_deal, rhs, true);
     }
+
+    diag.linear_solver_rhs_norm = rhs.l2_norm();
+    diag.linear_solver_tolerance = std::max(
+        solver_params_.abs_tol,
+        solver_params_.rel_tol * std::max(diag.linear_solver_rhs_norm,
+                                          solver_params_.ale_rhs_norm_floor));
 
     if (solver_params_.use_direct_solver) {
         dealii::SparseDirectUMFPACK direct_solver;
         direct_solver.initialize(A_mat);
         direct_solver.vmult(u_next_deal, rhs);
     } else {
-        const double tol = std::max(solver_params_.abs_tol,
-                                    solver_params_.rel_tol * std::max(rhs.l2_norm(), 1.0));
         dealii::SolverControl solver_control(
-            static_cast<unsigned int>(solver_params_.max_iterations), tol);
+            static_cast<unsigned int>(solver_params_.max_iterations), diag.linear_solver_tolerance);
+        // With right preconditioning, SolverControl monitors the unpreconditioned
+        // ||b-Ax||_2, matching the independently reported residual. The
+        // default remains left preconditioning to preserve legacy runs.
         dealii::SolverGMRES<dealii::Vector<double>>::AdditionalData gmres_data(
-            static_cast<unsigned int>(solver_params_.gmres_krylov_dim));
+            static_cast<unsigned int>(solver_params_.gmres_krylov_dim),
+            solver_params_.right_preconditioning, true);
         dealii::SolverGMRES<dealii::Vector<double>> solver(solver_control, gmres_data);
 
         dealii::PreconditionSSOR<dealii::SparseMatrix<double>> preconditioner;

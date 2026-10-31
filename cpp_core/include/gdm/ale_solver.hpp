@@ -3,6 +3,7 @@
 #include "gdm/mesh_state.hpp"
 #include "gdm/parameters.hpp"
 #include "gdm/pde_model.hpp"
+#include "gdm/stabilization.hpp"
 
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/sparsity_pattern.h>
@@ -20,6 +21,8 @@ struct ALEDiagnostics {
     double discrete_mass_n{0.0};
     double discrete_mass_next{0.0};
     double linear_solver_residual{0.0};
+    double linear_solver_rhs_norm{0.0};
+    double linear_solver_tolerance{0.0};
     std::vector<double> element_gcl_residuals;
 };
 
@@ -34,7 +37,8 @@ public:
                          double nu = 1.0e-3,
                          double bx = 0.4,
                          double by = 0.2,
-                         const LinearSolverParameters& solver_params = LinearSolverParameters{});
+                         const LinearSolverParameters& solver_params = LinearSolverParameters{},
+                         const StabilizationParameters& stabilization_params = StabilizationParameters{});
 
     static std::vector<MeshState::Coord2D> compute_mesh_velocity(
         const std::vector<MeshState::Coord2D>& nodes_n,
@@ -61,6 +65,7 @@ private:
     double nu_{1.0e-3};
     std::array<double, 2> b_{0.4, 0.2};
     LinearSolverParameters solver_params_;
+    StabilizationParameters stabilization_params_;
     dealii::Quadrature<2> quadrature_;
 };
 

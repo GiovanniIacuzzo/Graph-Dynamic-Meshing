@@ -140,11 +140,45 @@ def create_pde_model(
     return _gdm_core.ManufacturedConvectionDiffusion2D(params)
 
 
+def create_linear_solver_parameters(config: Optional[Dict[str, Any]] = None) -> "_gdm_core.LinearSolverParameters":
+    """Create validated native linear-solver settings from a plain dictionary."""
+    cfg = dict(config or {})
+    params = _gdm_core.LinearSolverParameters()
+    for name in ("rel_tol", "abs_tol", "max_iterations", "gmres_krylov_dim", "ssor_omega",
+                 "use_direct_solver", "right_preconditioning", "ale_rhs_norm_floor"):
+        if name in cfg:
+            setattr(params, name, cfg[name])
+    params.validate()
+    return params
+
+
+def create_stabilization_parameters(
+    mode: str = "galerkin", config: Optional[Dict[str, Any]] = None
+) -> "_gdm_core.StabilizationParameters":
+    """Create native Galerkin/SUPG settings; Galerkin remains the default."""
+    normalized = str(mode).strip().lower()
+    if normalized not in {"galerkin", "supg"}:
+        raise ValueError("stabilization mode deve essere 'galerkin' oppure 'supg'.")
+    cfg = dict(config or {})
+    params = _gdm_core.StabilizationParameters()
+    params.use_supg = normalized == "supg"
+    for name in ("c_time", "c_advection", "c_diffusion"):
+        if name in cfg:
+            setattr(params, name, float(cfg[name]))
+    params.validate()
+    return params
+
+
 def create_fem_solver(
     mesh: NativeMeshAdapter,
     pde: "_gdm_core.ManufacturedConvectionDiffusion2D",
+    stabilization_mode: str = "galerkin",
+    stabilization_config: Optional[Dict[str, Any]] = None,
+    linear_solver_config: Optional[Dict[str, Any]] = None,
 ) -> "_gdm_core.ConvectionDiffusionFEM2D":
-    return _gdm_core.ConvectionDiffusionFEM2D(mesh.core, pde)
+    solver_params = create_linear_solver_parameters(linear_solver_config)
+    stabilization_params = create_stabilization_parameters(stabilization_mode, stabilization_config)
+    return _gdm_core.ConvectionDiffusionFEM2D(mesh.core, pde, solver_params, stabilization_params)
 
 
 def create_ale_solver(
@@ -152,8 +186,15 @@ def create_ale_solver(
     nu: float = 1.0e-3,
     bx: float = 0.4,
     by: float = 0.2,
+    stabilization_mode: str = "galerkin",
+    stabilization_config: Optional[Dict[str, Any]] = None,
+    linear_solver_config: Optional[Dict[str, Any]] = None,
 ) -> "_gdm_core.ALESolver2D":
-    return _gdm_core.ALESolver2D(pde, float(nu), float(bx), float(by))
+    solver_params = create_linear_solver_parameters(linear_solver_config)
+    stabilization_params = create_stabilization_parameters(stabilization_mode, stabilization_config)
+    return _gdm_core.ALESolver2D(
+        pde, float(nu), float(bx), float(by), solver_params, stabilization_params
+    )
 
 
 def compute_native_mesh_metrics(

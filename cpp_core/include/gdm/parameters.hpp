@@ -83,9 +83,15 @@ struct LinearSolverParameters {
     std::size_t gmres_krylov_dim{50};
     double ssor_omega{1.0};
     bool use_direct_solver{false};
+    // Preserve historical left-preconditioned GMRES unless explicitly selected.
+    bool right_preconditioning{false};
+    // Historical ALE used max(1, ||rhs||_2); Stage E sets this floor to zero
+    // to use the same rhs-relative tolerance convention as the fixed solver.
+    double ale_rhs_norm_floor{1.0};
 
     void validate() const {
-        if (!std::isfinite(rel_tol) || !std::isfinite(abs_tol) || !std::isfinite(ssor_omega)) {
+        if (!std::isfinite(rel_tol) || !std::isfinite(abs_tol) ||
+            !std::isfinite(ssor_omega) || !std::isfinite(ale_rhs_norm_floor)) {
             throw std::invalid_argument("LinearSolverParameters: tolleranze non finite.");
         }
         if (rel_tol <= 0.0 || abs_tol <= 0.0) {
@@ -96,6 +102,9 @@ struct LinearSolverParameters {
         }
         if (ssor_omega <= 0.0 || ssor_omega >= 2.0) {
             throw std::invalid_argument("LinearSolverParameters: ssor_omega deve appartenere a (0, 2).");
+        }
+        if (ale_rhs_norm_floor < 0.0) {
+            throw std::invalid_argument("LinearSolverParameters: ale_rhs_norm_floor deve essere >= 0.");
         }
     }
 };

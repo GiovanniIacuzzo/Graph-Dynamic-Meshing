@@ -3,6 +3,7 @@
 #include "gdm/mesh_state.hpp"
 #include "gdm/parameters.hpp"
 #include "gdm/pde_model.hpp"
+#include "gdm/stabilization.hpp"
 
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/sparse_matrix.h>
@@ -19,14 +20,19 @@ class ConvectionDiffusionFEM2D {
 public:
     ConvectionDiffusionFEM2D(const MeshState& mesh,
                              const ManufacturedConvectionDiffusion2D& pde,
-                             const LinearSolverParameters& solver_params = LinearSolverParameters{});
+                             const LinearSolverParameters& solver_params = LinearSolverParameters{},
+                             const StabilizationParameters& stabilization_params = StabilizationParameters{});
 
     void rebuild_for_mesh(const MeshState& mesh);
 
     std::vector<double> step_backward_euler(const std::vector<double>& u_n,
                                             double dt,
                                             double t_next,
-                                            double* out_linear_residual = nullptr) const;
+                                            double* out_linear_residual = nullptr,
+                                            double* out_assembly_seconds = nullptr,
+                                            double* out_solve_seconds = nullptr,
+                                            double* out_rhs_norm = nullptr,
+                                            double* out_solver_tolerance = nullptr) const;
 
     const dealii::SparseMatrix<double>& mass_matrix() const noexcept { return mass_matrix_; }
     const dealii::SparseMatrix<double>& stiffness_matrix() const noexcept { return stiffness_matrix_; }
@@ -43,6 +49,7 @@ private:
     const MeshState* mesh_{nullptr};
     ManufacturedConvectionDiffusion2D pde_;
     LinearSolverParameters solver_params_;
+    StabilizationParameters stabilization_params_;
     dealii::Quadrature<2> quadrature_;
 
     dealii::SparsityPattern sparsity_pattern_;

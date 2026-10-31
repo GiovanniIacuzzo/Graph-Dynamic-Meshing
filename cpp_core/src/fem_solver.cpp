@@ -9,7 +9,9 @@
 #include <deal.II/lac/sparse_direct.h>
 #include <deal.II/numerics/matrix_tools.h>
 
+#include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <map>
 #include <stdexcept>
 
@@ -18,12 +20,15 @@ namespace gdm {
 ConvectionDiffusionFEM2D::ConvectionDiffusionFEM2D(
     const MeshState& mesh,
     const ManufacturedConvectionDiffusion2D& pde,
-    const LinearSolverParameters& solver_params)
+    const LinearSolverParameters& solver_params,
+    const StabilizationParameters& stabilization_params)
     : mesh_(&mesh),
       pde_(pde),
       solver_params_(solver_params),
+      stabilization_params_(stabilization_params),
       quadrature_(create_dunavant_degree5_quadrature()) {
     solver_params_.validate();
+    stabilization_params_.validate();
     assemble_static_operators();
 }
 
@@ -132,7 +137,11 @@ std::vector<double> ConvectionDiffusionFEM2D::step_backward_euler(
     const std::vector<double>& u_n,
     double dt,
     double t_next,
-    double* out_linear_residual) const {
+    double* out_linear_residual,
+    double* out_assembly_seconds,
+    double* out_solve_seconds,
+    double* out_rhs_norm,
+    double* out_solver_tolerance) const {
     if (u_n.size() != mesh_->num_nodes()) {
         throw std::invalid_argument("step_backward_euler: dimensione u_n non valida.");
     }
@@ -143,6 +152,7 @@ std::vector<double> ConvectionDiffusionFEM2D::step_backward_euler(
         throw std::logic_error("step_backward_euler: geometria mesh modificata senza rebuild_for_mesh.");
     }
 
+    const auto assembly_start = std::chrono::steady_clock::now();
     const std::size_t n_dofs = mesh_->num_nodes();
     dealii::SparseMatrix<double> system_matrix(sparsity_pattern_);
     system_matrix.copy_from(mass_matrix_);
@@ -164,7 +174,73 @@ std::vector<double> ConvectionDiffusionFEM2D::step_backward_euler(
         system_rhs[mesh_->py_node_to_dof(py_i)] += f_py[py_i];
     }
 
-    // Imposizione forte delle condizioni di Dirichlet sui nodi di bordo (eliminazione simmetrica)
+    // Residual-based SUPG for the fully discrete backward-Euler P1 operator.
+    // On affine P1 triangles, Delta(u_h)=0 elementwise; the strong residual
+    // therefore contains the transient, advective and forcing terms.
+    if (stabilization_params_.use_supg) {
+        dealii::FEValues<2> fe_values(
+            mesh_->mapping(), mesh_->fe(), quadrature_,
+            dealii::update_values | dealii::update_gradients |
+            dealii::update_quadrature_points | dealii::update_JxW_values);
+        const unsigned int dofs_per_cell = mesh_->fe().n_dofs_per_cell();
+        const unsigned int n_q_points = quadrature_.size();
+        dealii::FullMatrix<double> cell_supg(dofs_per_cell, dofs_per_cell);
+        dealii::Vector<double> cell_rhs(dofs_per_cell);
+        std::vector<dealii::types::global_dof_index> local_dof_indices(dofs_per_cell);
+        const auto vel = pde_.velocity();
+        const std::array<double, 2> beta = {vel[0], vel[1]};
+
+        for (const auto& cell : mesh_->dof_handler().active_cell_iterators()) {
+            fe_values.reinit(cell);
+            cell_supg = 0.0;
+            cell_rhs = 0.0;
+            cell->get_dof_indices(local_dof_indices);
+
+            std::array<std::array<double, 2>, 3> grad_phi{};
+            std::array<std::array<double, 2>, 3> vertices{};
+            for (unsigned int i = 0; i < 3; ++i) {
+                const auto grad = fe_values.shape_grad(i, 0);
+                grad_phi[i] = {grad[0], grad[1]};
+                const auto vertex = cell->vertex(i);
+                vertices[i] = {vertex[0], vertex[1]};
+            }
+            const double speed = std::hypot(beta[0], beta[1]);
+            const double h_beta = directional_element_length(grad_phi, beta, vertices);
+            const double tau = supg_tau(dt, speed, h_beta, pde_.nu(), stabilization_params_);
+
+            for (unsigned int q = 0; q < n_q_points; ++q) {
+                double u_old_q = 0.0;
+                for (unsigned int j = 0; j < dofs_per_cell; ++j) {
+                    u_old_q += u_n_deal[local_dof_indices[j]] * fe_values.shape_value(j, q);
+                }
+                const auto& point = fe_values.quadrature_point(q);
+                const double forcing = pde_.evaluate_forcing(point[0], point[1], t_next);
+                const double jxw = fe_values.JxW(q);
+
+                for (unsigned int i = 0; i < dofs_per_cell; ++i) {
+                    const auto grad_i = fe_values.shape_grad(i, q);
+                    const double streamline_test = beta[0] * grad_i[0] + beta[1] * grad_i[1];
+                    cell_rhs[i] += tau * (u_old_q / dt + forcing) * streamline_test * jxw;
+                    for (unsigned int j = 0; j < dofs_per_cell; ++j) {
+                        const auto grad_j = fe_values.shape_grad(j, q);
+                        const double streamline_trial = beta[0] * grad_j[0] + beta[1] * grad_j[1];
+                        const double transient_trial = fe_values.shape_value(j, q) / dt;
+                        cell_supg(i, j) += tau * (transient_trial + streamline_trial) *
+                                           streamline_test * jxw;
+                    }
+                }
+            }
+
+            for (unsigned int i = 0; i < dofs_per_cell; ++i) {
+                system_rhs[local_dof_indices[i]] += cell_rhs[i];
+                for (unsigned int j = 0; j < dofs_per_cell; ++j) {
+                    system_matrix.add(local_dof_indices[i], local_dof_indices[j], cell_supg(i, j));
+                }
+            }
+        }
+    }
+
+    // Imposizione forte Dirichlet: eliminazione di righe/colonne e correzione del termine noto
     std::map<dealii::types::global_dof_index, double> boundary_values;
     const auto& nodes = mesh_->nodes();
     for (std::int64_t b_py : mesh_->boundary_nodes()) {
@@ -177,17 +253,34 @@ std::vector<double> ConvectionDiffusionFEM2D::step_backward_euler(
     dealii::MatrixTools::apply_boundary_values(
         boundary_values, system_matrix, solution_deal, system_rhs, true);
 
+    const double rhs_norm = system_rhs.l2_norm();
+    const double solver_tolerance = std::max(solver_params_.abs_tol,
+                                             solver_params_.rel_tol * rhs_norm);
+    if (out_rhs_norm != nullptr) {
+        *out_rhs_norm = rhs_norm;
+    }
+    if (out_solver_tolerance != nullptr) {
+        *out_solver_tolerance = solver_tolerance;
+    }
+
+    if (out_assembly_seconds != nullptr) {
+        *out_assembly_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - assembly_start).count();
+    }
+    const auto solve_start = std::chrono::steady_clock::now();
     if (solver_params_.use_direct_solver) {
         dealii::SparseDirectUMFPACK direct_solver;
         direct_solver.initialize(system_matrix);
         direct_solver.vmult(solution_deal, system_rhs);
     } else {
-        const double tol = std::max(solver_params_.abs_tol,
-                                    solver_params_.rel_tol * system_rhs.l2_norm());
         dealii::SolverControl solver_control(
-            static_cast<unsigned int>(solver_params_.max_iterations), tol);
+            static_cast<unsigned int>(solver_params_.max_iterations), solver_tolerance);
+        // With right preconditioning, SolverControl monitors the unpreconditioned
+        // ||b-Ax||_2, matching the independently reported residual. The
+        // default remains left preconditioning to preserve legacy runs.
         dealii::SolverGMRES<dealii::Vector<double>>::AdditionalData gmres_data(
-            static_cast<unsigned int>(solver_params_.gmres_krylov_dim));
+            static_cast<unsigned int>(solver_params_.gmres_krylov_dim),
+            solver_params_.right_preconditioning, true);
         dealii::SolverGMRES<dealii::Vector<double>> solver(solver_control, gmres_data);
 
         dealii::PreconditionSSOR<dealii::SparseMatrix<double>> preconditioner;
@@ -195,6 +288,10 @@ std::vector<double> ConvectionDiffusionFEM2D::step_backward_euler(
         solver.solve(system_matrix, solution_deal, system_rhs, preconditioner);
     }
 
+    if (out_solve_seconds != nullptr) {
+        *out_solve_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - solve_start).count();
+    }
     if (out_linear_residual != nullptr) {
         dealii::Vector<double> res(n_dofs);
         system_matrix.vmult(res, solution_deal);

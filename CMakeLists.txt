@@ -62,6 +62,7 @@ set(GDM_CPP_TESTS
     test_fem_convergence
     test_ale_gcl
     test_ale_convergence
+    test_supg
 )
 
 foreach(test_name IN LISTS GDM_CPP_TESTS)
