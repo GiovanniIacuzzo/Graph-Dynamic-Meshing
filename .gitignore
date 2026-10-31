@@ -5,8 +5,9 @@ build/
 backup/
 data/
 results/
+patches/
 compiler/
 CMakeLists.txt.before_dealii_compat.bak
 idea.md
 .DS_Store
-*.so
+_gdm_core.cpython-310-darwin.so

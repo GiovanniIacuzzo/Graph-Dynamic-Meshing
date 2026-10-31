@@ -304,6 +304,8 @@ def run_pde_trajectory_episode(
     inference_engine: Optional[MeshMoverInferenceEngine] = None,
     *,
     compute_diagnostics: bool = True,
+    capture_safety_audit: bool = False,
+    capture_mesh_snapshots: bool = False,
 ) -> Dict[str, Any]:
     """Run a single transient PDE trajectory for a given strategy using native deal.II kernels.
 
@@ -313,6 +315,8 @@ def run_pde_trajectory_episode(
     """
     if strategy not in {"fixed_fem", "stage_a_gnn", "stage_d_gnn"}:
         raise ValueError(f"Strategia non supportata: {strategy!r}")
+    if (capture_safety_audit or capture_mesh_snapshots) and not compute_diagnostics:
+        raise ValueError("Safety/tracking audit requires compute_diagnostics=True.")
     if strategy != "fixed_fem" and inference_engine is None:
         raise ValueError(f"La strategia {strategy!r} richiede un MeshMoverInferenceEngine valido.")
 
@@ -377,6 +381,24 @@ def run_pde_trajectory_episode(
     times_so_far: List[float] = []
     rel_l2_so_far: List[float] = []
     rel_h1_so_far: List[float] = []
+    # Optional forensic outputs: disabled in the production benchmark by default.
+    safety_audit_events: List[Dict[str, Any]] = []
+    safety_event_vectors: List[Dict[str, Any]] = []
+    mesh_tracking_rows: List[Dict[str, Any]] = []
+    mesh_snapshots: List[Dict[str, Any]] = []
+    if capture_safety_audit or capture_mesh_snapshots:
+        from gdm.safety_diagnostics import mesh_source_tracking_metrics
+        center0 = tuple(float(v) for v in pde.get_center(0.0))
+        if capture_safety_audit:
+            mesh_tracking_rows.append(mesh_source_tracking_metrics(
+                nodes=curr_mesh.nodes, cells=curr_mesh.cells, source_center=center0,
+                sigma=sigma, domain=domain_cfg, time=0.0, step=0,
+            ))
+        if capture_mesh_snapshots:
+            mesh_snapshots.append({
+                "time": 0.0, "step": 0, "nodes": curr_mesh.nodes.copy(),
+                "field": u_curr.copy(), "source_center": np.asarray(center0, dtype=np.float64),
+            })
 
     if compute_diagnostics:
         err0 = compute_native_continuous_error_details(curr_mesh, u_curr, pde, 0.0)
@@ -486,6 +508,32 @@ def run_pde_trajectory_episode(
             target_nodes = np.asarray(filt_res["safe_nodes"], dtype=np.float64)
             base_nodes = curr_mesh.nodes.copy()
             alpha_current_window = float(filt_res["alpha_global"])
+            if capture_safety_audit:
+                from gdm.safety_diagnostics import safety_event_diagnostics
+                event_center = tuple(float(v) for v in pde.get_center(t_curr))
+                audit_row = safety_event_diagnostics(
+                    nodes=curr_mesh.nodes, cells=curr_mesh.cells,
+                    boundary_nodes=curr_mesh.boundary_nodes, raw_displacement=raw_disp,
+                    filter_result=filt_res, epsilon=epsilon, event_time=t_curr,
+                    source_center=event_center,
+                )
+                audit_row.update({
+                    "case_id": str(case_spec["case_id"]),
+                    "split": str(case_spec["split"]),
+                    "seed": int(case_spec["case_seed"]),
+                    "adaptation_step": int(step),
+                    "sigma": sigma, "beta": beta,
+                })
+                safety_audit_events.append(audit_row)
+                locked_raw = raw_disp.copy()
+                if curr_mesh.boundary_nodes.size:
+                    locked_raw[curr_mesh.boundary_nodes] = 0.0
+                safety_event_vectors.append({
+                    "time": float(t_curr),
+                    "nodes_before": curr_mesh.nodes.copy(),
+                    "raw_displacement": locked_raw,
+                    "safe_displacement": target_nodes - curr_mesh.nodes,
+                })
             intervened_current_window = int(
                 bool(alpha_current_window < 1.0 - 1.0e-12 or filt_res.get("filter_activated", False))
             )
@@ -536,6 +584,30 @@ def run_pde_trajectory_episode(
         u_curr = u_next
         curr_mesh = next_mesh
         step_wall_time = time.perf_counter() - t_step_wall_start
+
+        if capture_safety_audit:
+            from gdm.safety_diagnostics import mesh_source_tracking_metrics
+            centre_now = tuple(float(v) for v in pde.get_center(t_next))
+            tracking_row = mesh_source_tracking_metrics(
+                nodes=curr_mesh.nodes, cells=curr_mesh.cells, source_center=centre_now,
+                sigma=sigma, domain=domain_cfg, time=t_next, step=step,
+            )
+            tracking_row.update({
+                "case_id": str(case_spec["case_id"]),
+                "split": str(case_spec["split"]),
+                "seed": int(case_spec["case_seed"]),
+            })
+            mesh_tracking_rows.append(tracking_row)
+
+        if capture_mesh_snapshots and step in {
+            int(round(n_steps / 3)), int(round(2 * n_steps / 3)), n_steps
+        }:
+            centre_now = tuple(float(v) for v in pde.get_center(t_next))
+            mesh_snapshots.append({
+                "time": float(t_next), "step": int(step),
+                "nodes": curr_mesh.nodes.copy(), "field": u_curr.copy(),
+                "source_center": np.asarray(centre_now, dtype=np.float64),
+            })
 
         if compute_diagnostics:
             err_step = compute_native_continuous_error_details(curr_mesh, u_curr, pde, t_next)
@@ -689,6 +761,13 @@ def run_pde_trajectory_episode(
         "timings": timings,
         "final_nodes": curr_mesh.nodes.copy(),
         "final_u": u_curr.copy(),
+        **({
+            "safety_audit_events": safety_audit_events,
+            "safety_event_vectors": safety_event_vectors,
+            "mesh_tracking_rows": mesh_tracking_rows,
+            "mesh_snapshots": mesh_snapshots,
+            "audit_cells": curr_mesh.cells.copy(),
+        } if (capture_safety_audit or capture_mesh_snapshots) else {}),
     }
 
 
