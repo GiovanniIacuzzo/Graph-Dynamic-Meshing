@@ -10,11 +10,11 @@ Nei problemi transitori, una modifica istantanea della geometria richiede in gen
 
 I metodi classici di moving mesh determinano le coordinate nodali mediante monitor function, equazioni ausiliarie o funzionali variazionali \citep{cao2001an,huang2001practical,huang2001variational,huang1999moving,budd2009adaptivity}. Il movimento di mesh basato su reti neurali è già stato studiato in contesti differenti. M2N apprende spostamenti di mesh per solver PDE e affronta anche il rischio di tangling \citep{song2022m2n}; DMM propone un mesh mover data-free basato sull'equazione di Monge--Ampère e sposta nodi esistenti senza cambiare la connettività \citep{hu2024dmm}; UM2N studia la generalizzazione tra strutture e problemi \citep{zhang2024towards}; G-Adaptivity collega l'adattamento appreso direttamente all'errore FEM \citep{rowbottom2025gadaptivity}; UGM2N sviluppa una strategia non supervisionata basata su una loss M-uniform e rivendica trasferibilità tra PDE e geometrie \citep{wang2025ugm2n}. Sono inoltre disponibili studi di $r$-adattività neurale per problemi ellittici parametrici \citep{aballay2026radaptive}.
 
-Per rendere esplicito il perimetro del confronto, la Tabella~\ref{tab:related_work} riassume le differenze di impostazione rilevanti per questo studio. La tabella non pretende di essere una tassonomia esaustiva di ogni variante implementativa; riporta soltanto gli aspetti documentati nei lavori citati.
+Per rendere esplicito il perimetro del confronto, la Tabella~\ref{tab:related_work} riassume le differenze di impostazione rilevanti per questo studio.
 
 \begin{table*}[!t]
 \centering\small
-\caption{Confronto sintetico con lavori rappresentativi sul movimento di mesh appreso. Le descrizioni sono limitate al principio metodologico principale dichiarato nei lavori citati.}
+\caption{Confronto sintetico con lavori rappresentativi sul movimento di mesh appreso.}
 \label{tab:related_work}
 \begin{tabularx}{\textwidth}{p{0.13\textwidth}p{0.29\textwidth}X}
 \toprule
@@ -30,11 +30,9 @@ Aballay et al. (2026) \citep{aballay2026radaptive} & FEM $r$-adattivo neurale pe
 \end{tabularx}
 \end{table*}
 
-Questa letteratura esclude che la novità possa essere identificata nella sola combinazione ``GNN + mesh movement'', nella sola prevenzione del tangling o nell'uso dell'ALE. Il posizionamento qui adottato è più circoscritto: presentare e verificare una pipeline integrata per una specifica famiglia di PDE transitorie, nella quale una GNN propone uno spostamento nodale dipendente dallo stato numerico corrente, un filtro indipendente verifica il percorso geometrico e il movimento viene inserito in un solver ALE con test espliciti della D-GCL. Il valore della pipeline viene misurato attraverso errori PDE, qualità geometrica, costo e confronto con controllori classici di $r$-refinement.
-
 \subsection{Domanda scientifica}
 
-La domanda principale è se, a parità di topologia, numero di nodi, discretizzazione temporale e solver FEM--ALE, il movimento proposto da una GNN trajectory-aware possa ridurre l'errore della soluzione rispetto a una mesh fissa e a strategie classiche di monitor-based $r$-refinement. La valutazione distingue il miglioramento osservato sull'endpoint primario dalla validità geometrica, dal costo online e dalla robustezza del filtro. Non si assume a priori che il metodo appreso sia superiore.
+La domanda principale è se, a parità di topologia, numero di nodi, discretizzazione temporale e solver FEM--ALE, il movimento proposto da una GNN trajectory-aware possa ridurre l'errore della soluzione rispetto a una mesh fissa e a strategie classiche di monitor-based $r$-refinement. La valutazione distingue il miglioramento osservato sull'endpoint primario dalla validità geometrica, dal costo online e dalla robustezza del filtro.
 
 \subsection{Contributi e limiti delle affermazioni}
 
@@ -46,5 +44,3 @@ I contributi verificati o valutati nel presente manoscritto sono:
   \item una caratterizzazione del solver nativo attraverso convergenza temporale, convergenza spaziale parzialmente separata, Péclet locale e confronto Galerkin/SUPG (Stage E1);
   \item un confronto held-out con tre controllori classici di $r$-refinement a topologia fissa (Stage F1), accompagnato da diagnostiche sul tracking della struttura mobile e sull'intervento del filtro.
 \end{enumerate}
-
-Le affermazioni sono limitate al dominio quadrato bidimensionale, agli elementi triangolari $P_1$, alla famiglia MMS e agli intervalli parametrici testati. Non vengono dimostrate generalizzazione a PDE o geometrie differenti, robustezza rispetto alla risoluzione, convergenza degli obiettivi di generazione dei target o superiorità computazionale generale. Non è inoltre eseguito un confronto quantitativo diretto con le altre architetture neurali citate nella rassegna: esse definiscono il contesto scientifico, ma non costituiscono baseline sperimentali di questo studio. Il miglioramento osservato in F1 riguarda la pipeline completa e la discretizzazione temporale adottata; non identifica separatamente il contributo causale della GNN, dei target temporali o del filtro.

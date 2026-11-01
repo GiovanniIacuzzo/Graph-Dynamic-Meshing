@@ -156,6 +156,7 @@ PYBIND11_MODULE(_gdm_core, m) {
         .def_readwrite("epsilon", &SafetyParameters::epsilon)
         .def_readwrite("tol_deg", &SafetyParameters::tol_deg)
         .def_readwrite("safety_margin", &SafetyParameters::safety_margin)
+        .def_readwrite("relative_jacobian_margin", &SafetyParameters::relative_jacobian_margin)
         .def_readwrite("lock_boundary_nodes", &SafetyParameters::lock_boundary_nodes)
         .def_readwrite("verbose", &SafetyParameters::verbose)
         .def("validate", &SafetyParameters::validate);

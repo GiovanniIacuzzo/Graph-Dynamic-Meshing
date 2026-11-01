@@ -91,57 +91,270 @@ def _attach_case_metadata(
     return enriched
 
 
-def _plot_case_snapshots(npz_path: Path, out_path: Path, case_id: str) -> None:
+def _plot_case_snapshots(
+    npz_path: Path,
+    out_path: Path,
+    case_id: str,
+    *,
+    preview_path: Path | None = None,
+    dpi: int = 600,
+) -> None:
+    """Create a publication-quality, four-panel moving-source figure.
+
+    The figure uses the saved mesh and nodal field snapshots only. It does not
+    rerun the PDE solver, the GNN, or the native safety filter. All panels share
+    one scalar-field normalization, one colourbar, and the same spatial axes.
+    The current numerical field is plotted on its own deformed P1 mesh.
+    """
+    from matplotlib import patheffects as path_effects
+    from matplotlib.colors import Normalize
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import MaxNLocator
+
+    npz_path = Path(npz_path)
+    out_path = Path(out_path)
+    if preview_path is None:
+        preview_path = out_path.with_suffix(".png")
+    else:
+        preview_path = Path(preview_path)
+
     with np.load(npz_path) as data:
-        times = data["times"]
-        nodes = data["nodes"]
-        fields = data["fields"]
-        centers = data["centers"]
-        cells = data["cells"]
+        required = {"times", "nodes", "fields", "centers", "cells", "sigma"}
+        missing = required.difference(data.files)
+        if missing:
+            raise ValueError(f"Snapshot archive is missing arrays: {sorted(missing)}")
+        times = np.asarray(data["times"], dtype=np.float64)
+        nodes = np.asarray(data["nodes"], dtype=np.float64)
+        fields = np.asarray(data["fields"], dtype=np.float64)
+        centers = np.asarray(data["centers"], dtype=np.float64)
+        cells = np.asarray(data["cells"], dtype=np.int64)
         sigma = float(data["sigma"])
-    n = len(times)
-    fig, axes = plt.subplots(2, n, figsize=(3.0 * n, 5.5), squeeze=False)
-    contour = None
-    for k, t in enumerate(times):
-        tri = mtri.Triangulation(nodes[k, :, 0], nodes[k, :, 1], cells)
-        cx, cy = centers[k]
-        peak_node = int(np.argmax(fields[k]))
-        peak_xy = nodes[k, peak_node]
-        axes[0, k].triplot(tri, color="#334155", linewidth=0.32)
-        axes[0, k].scatter([cx], [cy], marker="+", s=55, linewidths=1.5,
-                           color="#dc2626", zorder=5, label="Gaussian centre")
-        axes[0, k].scatter([peak_xy[0]], [peak_xy[1]], marker="x", s=28,
-                           color="#111827", zorder=6, label=r"$u_h$ nodal maximum")
-        for radius, style in ((sigma, "--"), (2.0 * sigma, ":")):
-            axes[0, k].add_patch(plt.Circle((cx, cy), radius, fill=False,
-                                            linestyle=style, linewidth=0.9,
-                                            color="#dc2626", alpha=0.9))
-        axes[0, k].set_title(f"Mesh, t={t:.3f}")
-        contour = axes[1, k].tricontourf(tri, fields[k], levels=24, cmap="viridis")
-        axes[1, k].scatter([cx], [cy], marker="+", s=55, linewidths=1.5,
-                           color="#dc2626", zorder=5)
-        axes[1, k].scatter([peak_xy[0]], [peak_xy[1]], marker="x", s=28,
-                           color="#111827", zorder=6)
-        axes[1, k].set_title(rf"$u_h$, t={t:.3f}")
-        for row in range(2):
-            axes[row, k].set_aspect("equal")
-            axes[row, k].set_xlim(0.0, 1.0); axes[row, k].set_ylim(0.0, 1.0)
-            axes[row, k].set_xticks([]); axes[row, k].set_yticks([])
-    if contour is not None:
-        fig.colorbar(contour, ax=list(axes[1, :]), shrink=0.78, label=r"$u_h$")
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=2, fontsize=7)
-    fig.suptitle(f"GDM source-tracking diagnostic: {case_id}\n"
-                 r"Red +: Gaussian centre; black x: nodal maximum of $u_h$; rings: $\sigma$, $2\sigma$")
-    # Explicit margins avoid Matplotlib's tight_layout warning when a shared
-    # colorbar and a figure-level legend are both present.
-    fig.subplots_adjust(left=0.035, right=0.91, bottom=0.045, top=0.80,
-                        wspace=0.045, hspace=0.12)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, bbox_inches="tight")
-    plt.close(fig)
+
+    # Strict shape and numerical checks prevent a visually plausible plot from
+    # being generated from mismatched snapshots or an invalid mesh.
+    if times.ndim != 1 or times.size < 1:
+        raise ValueError("times must be a non-empty one-dimensional array")
+    n_times = int(times.size)
+    if nodes.ndim != 3 or nodes.shape[0] != n_times or nodes.shape[2] != 2:
+        raise ValueError("nodes must have shape (n_times, n_nodes, 2)")
+    if fields.shape != nodes.shape[:2]:
+        raise ValueError("fields must have shape (n_times, n_nodes)")
+    if centers.shape != (n_times, 2):
+        raise ValueError("centers must have shape (n_times, 2)")
+    if cells.ndim != 2 or cells.shape[1] != 3 or cells.size == 0:
+        raise ValueError("cells must be a non-empty (n_cells, 3) array")
+    if cells.min() < 0 or cells.max() >= nodes.shape[1]:
+        raise ValueError("cells contain node indices outside the nodes array")
+    if not np.isfinite(sigma) or sigma <= 0.0:
+        raise ValueError("sigma must be finite and positive")
+    for name, array in (("times", times), ("nodes", nodes), ("fields", fields), ("centers", centers)):
+        if not np.all(np.isfinite(array)):
+            raise ValueError(f"{name} contains NaN or infinite values")
+    if n_times > 1 and np.any(np.diff(times) <= 0.0):
+        raise ValueError("times must be strictly increasing")
+
+    vmin = float(np.min(fields))
+    vmax = float(np.max(fields))
+    if not vmax > vmin:
+        raise ValueError("The saved scalar fields have no non-zero range")
+
+    # One norm and one set of levels are shared by every time snapshot. This is
+    # essential: independent per-panel normalizations make temporal amplitudes
+    # visually incomparable and invalidate a shared colourbar.
+    norm = Normalize(vmin=vmin, vmax=vmax, clip=False)
+    levels = np.linspace(vmin, vmax, 31)
 
 
+    # Journal-oriented compact styling: restrained mesh edges, clear symbols,
+    # serif typography, and a wide single-row layout suited to a two-column paper.
+    style = {
+        "font.family": "serif",
+        "font.serif": ["STIX Two Text", "STIXGeneral", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
+        "font.size": 7.2,
+        "axes.labelsize": 7.4,
+        "axes.titlesize": 8.0,
+        "xtick.labelsize": 6.4,
+        "ytick.labelsize": 6.4,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "axes.linewidth": 0.55,
+        "savefig.facecolor": "white",
+        "figure.facecolor": "white",
+    }
+
+    # Colour-blind-conscious accents that remain distinguishable over viridis.
+    centre_colour = "#D55E00"       # vermilion: prescribed Gaussian centre
+    peak_colour = "#202124"         # near-black: nodal maximizer of u_h
+    sigma_colour = "#E69F00"        # orange: r = sigma
+    two_sigma_colour = "#56B4E9"    # sky blue: r = 2 sigma
+    mesh_colour = "#17212B"
+
+    with plt.rc_context(style):
+        fig = plt.figure(figsize=(7.25, 2.58), constrained_layout=False)
+        grid = fig.add_gridspec(
+            1, 5,
+            width_ratios=(1.0, 1.0, 1.0, 1.0, 0.055),
+            left=0.075, right=0.945, bottom=0.225, top=0.785,
+            wspace=0.185,
+        )
+        axes = [fig.add_subplot(grid[0, j]) for j in range(4)]
+        colour_ax = fig.add_subplot(grid[0, 4])
+
+        mappable = None
+        peak_offsets: list[float] = []
+        min_signed_jacobians: list[float] = []
+        panel_labels = ("(a)", "(b)", "(c)", "(d)")
+
+        for k, (ax, time) in enumerate(zip(axes, times)):
+            xy = nodes[k]
+            tri = mtri.Triangulation(xy[:, 0], xy[:, 1], triangles=cells)
+
+            # Check orientation on the actual coordinates used for this panel.
+            p0 = xy[cells[:, 0]]
+            p1 = xy[cells[:, 1]]
+            p2 = xy[cells[:, 2]]
+            jac = ((p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1])
+                   - (p2[:, 0] - p0[:, 0]) * (p1[:, 1] - p0[:, 1]))
+            min_jac = float(np.min(jac))
+            min_signed_jacobians.append(min_jac)
+            if min_jac <= 0.0:
+                raise ValueError(
+                    f"Snapshot at t={time:.6g} contains a non-positive signed element Jacobian "
+                    f"(minimum {min_jac:.6e}); refusing to present it as an admissible mesh."
+                )
+
+            field = fields[k]
+            centre = centers[k]
+            peak_index = int(np.argmax(field))
+            peak_xy = xy[peak_index]
+            peak_offset = float(np.linalg.norm(peak_xy - centre) / sigma)
+            peak_offsets.append(peak_offset)
+
+            # Filled contours use exactly the same norm and levels for all times.
+            mappable = ax.tricontourf(
+                tri, field, levels=levels, cmap="viridis", norm=norm,
+                antialiased=True, zorder=1,
+            )
+
+            # Overlay the current deformed triangular mesh; thin edges preserve
+            # the scalar field while making the r-adaptive geometry inspectable.
+            ax.triplot(
+                tri, color=mesh_colour, linewidth=0.17, alpha=0.27,
+                zorder=2, solid_capstyle="round",
+            )
+
+            cx, cy = map(float, centre)
+            ax.add_patch(plt.Circle(
+                (cx, cy), sigma, fill=False, edgecolor=sigma_colour,
+                linewidth=0.90, linestyle="-", zorder=4,
+            ))
+            ax.add_patch(plt.Circle(
+                (cx, cy), 2.0 * sigma, fill=False, edgecolor=two_sigma_colour,
+                linewidth=0.95, linestyle=(0, (3.0, 1.8)), zorder=4,
+            ))
+
+            # The nodal maximizer is an open circle; the prescribed Gaussian
+            # centre is a compact plus drawn above it. The two locations are
+            # close in this trajectory, so the separate peak-offset annotation
+            # is retained to quantify their actual (unshifted) separation.
+            ax.plot(
+                float(peak_xy[0]), float(peak_xy[1]), linestyle="none",
+                marker="o", markersize=5.5, markerfacecolor="white",
+                markeredgecolor=peak_colour, markeredgewidth=1.15,
+                zorder=7,
+            )
+            centre_halo = [
+                path_effects.Stroke(linewidth=2.5, foreground="white"),
+                path_effects.Normal(),
+            ]
+            ax.plot(
+                cx, cy, linestyle="none", marker="+", markersize=6.8,
+                markeredgewidth=1.55, color=centre_colour,
+                path_effects=centre_halo, zorder=8,
+            )
+
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.0)
+            ax.set_aspect("equal", adjustable="box")
+            ax.set_xticks((0.0, 0.5, 1.0))
+            ax.set_yticks((0.0, 0.5, 1.0))
+            ax.tick_params(axis="both", direction="out", length=2.2, width=0.5, pad=1.5)
+            ax.set_xlabel(r"$x$", labelpad=0.5)
+            if k == 0:
+                ax.set_ylabel(r"$y$", labelpad=1.0)
+            else:
+                ax.tick_params(axis="y", labelleft=False)
+            for spine in ax.spines.values():
+                spine.set_linewidth(0.55)
+                spine.set_color("#454545")
+
+            ax.set_title(f"{panel_labels[k]}  $t={time:.3f}$", pad=4.0, fontweight="semibold")
+            ax.text(
+                0.97, 0.035, rf"$d_{{\mathrm{{peak}}}}/\sigma={peak_offset:.2f}$",
+                transform=ax.transAxes, ha="right", va="bottom", fontsize=6.1,
+                color="#202124",
+                bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "none", "alpha": 0.88},
+                zorder=10,
+            )
+
+        if mappable is None:
+            raise RuntimeError("No scalar-field panels were generated")
+
+        # A single external colourbar describes the common scalar normalization.
+        colourbar = fig.colorbar(mappable, cax=colour_ax)
+        colourbar.set_label(r"Numerical solution $u_h$", rotation=90, labelpad=4.0, fontsize=7.0)
+        colourbar.locator = MaxNLocator(nbins=5)
+        colourbar.update_ticks()
+        colourbar.ax.tick_params(labelsize=6.2, length=2.0, width=0.5, pad=1.5)
+        colourbar.outline.set_linewidth(0.5)
+
+        legend_handles = [
+            Line2D([], [], color=centre_colour, marker="+", linestyle="none",
+                   markersize=7.0, markeredgewidth=1.5, label="Gaussian center"),
+            Line2D([], [], color=peak_colour, marker="o", markerfacecolor="white",
+                   linestyle="none", markersize=5.0, markeredgewidth=1.1,
+                   label=r"Nodal maximum of $u_h$"),
+            Line2D([], [], color=sigma_colour, linestyle="-", linewidth=1.0,
+                   label=r"$r=\sigma$"),
+            Line2D([], [], color=two_sigma_colour, linestyle=(0, (3.0, 1.8)), linewidth=1.0,
+                   label=r"$r=2\sigma$"),
+        ]
+        fig.legend(
+            handles=legend_handles, loc="upper center", bbox_to_anchor=(0.50, 0.975),
+            ncol=4, frameon=False, fontsize=6.7, handlelength=1.45,
+            handletextpad=0.45, columnspacing=1.25, borderaxespad=0.0,
+        )
+        fig.text(
+            0.50, 0.075,
+            r"Nodal field $u_h$ on the corresponding deformed $P_1$ triangulation.",
+            ha="center", va="center", fontsize=6.5, color="#404040",
+        )
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(
+            out_path, format="pdf", bbox_inches="tight", pad_inches=0.025,
+            facecolor="white",
+            metadata={
+                "Title": f"Moving-source tracking on the deformed finite-element mesh, case {case_id}",
+                "Subject": "Four saved numerical solution and mesh snapshots with common scalar-field normalization",
+                "Creator": "GDM source-tracking publication plot",
+            },
+        )
+        fig.savefig(
+            preview_path, format="png", dpi=int(dpi), bbox_inches="tight",
+            pad_inches=0.025, facecolor="white",
+        )
+        plt.close(fig)
+
+    LOG.info(
+        "Publication figure saved: %s (preview: %s); global u_h range=[%.6g, %.6g], "
+        "peak offsets/sigma=%s, minimum signed J=%s",
+        out_path, preview_path, vmin, vmax,
+        [round(v, 4) for v in peak_offsets],
+        [f"{v:.4e}" for v in min_signed_jacobians],
+    )
 def _plot_tracking(rows: Sequence[Mapping[str, Any]], out_path: Path) -> None:
     if not rows:
         return
@@ -361,8 +574,49 @@ def main() -> None:
     parser.add_argument("--max-cases", type=int, default=4)
     parser.add_argument("--case-id", action="append", dest="case_ids")
     parser.add_argument("--overwrite", action="store_true")
+
+    # Plot-only path: reuses a saved mesh_snapshots.npz and does not invoke the
+    # GNN, the FEM solver, or the safety filter.
+    parser.add_argument(
+        "--plot-existing-snapshots", type=Path, default=None,
+        help="Regenerate only the source-tracking figure from an existing mesh_snapshots.npz.",
+    )
+    parser.add_argument(
+        "--output-figure", type=Path, default=None,
+        help="Destination PDF for --plot-existing-snapshots (a PNG preview is also written).",
+    )
+    parser.add_argument(
+        "--case-label", default="case_00054",
+        help="Short case identifier used only in PDF metadata/logging.",
+    )
+    parser.add_argument(
+        "--figure-dpi", type=int, default=600,
+        help="Resolution of the companion PNG preview (the PDF remains vector-based).",
+    )
+
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+
+    if args.plot_existing_snapshots is not None:
+        if args.output_figure is None:
+            parser.error("--output-figure is required when --plot-existing-snapshots is used")
+        if args.figure_dpi < 150:
+            parser.error("--figure-dpi must be at least 150")
+        if not args.plot_existing_snapshots.is_file():
+            parser.error(f"Snapshot archive does not exist: {args.plot_existing_snapshots}")
+        _plot_case_snapshots(
+            args.plot_existing_snapshots,
+            args.output_figure,
+            args.case_label,
+            dpi=args.figure_dpi,
+        )
+        print(f"Publication figure written to: {args.output_figure}")
+        print(f"PNG preview written to: {args.output_figure.with_suffix('.png')}")
+        return
+
+    if args.output_figure is not None:
+        parser.error("--output-figure can only be used together with --plot-existing-snapshots")
+
     out = run(args.config, args.split, args.max_cases, args.case_ids, args.overwrite)
     print(f"Safety/tracking audit written to: {out}")
 

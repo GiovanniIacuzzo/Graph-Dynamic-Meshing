@@ -50,6 +50,28 @@ double minimum_jacobian_for_alpha(const std::vector<Coord>& nodes,
     return min_j;
 }
 
+double minimum_buffered_slack(const std::vector<Coord>& safe_nodes,
+                              const std::vector<Cell>& cells,
+                              const std::vector<double>& initial_jacobians,
+                              const std::vector<double>& cell_buffers,
+                              double epsilon) {
+    double min_slack = std::numeric_limits<double>::infinity();
+    for (std::size_t e = 0; e < cells.size(); ++e) {
+        const auto i0 = static_cast<std::size_t>(cells[e][0]);
+        const auto i1 = static_cast<std::size_t>(cells[e][1]);
+        const auto i2 = static_cast<std::size_t>(cells[e][2]);
+        const double jacobian = triangle_jacobian(
+            safe_nodes[i0], safe_nodes[i1], safe_nodes[i2]);
+        // If the initial cell does not have enough room for the numerical
+        // buffer, its admissible floor is its initial determinant; that cell
+        // consequently forces alpha=0 in the path calculation.
+        const double required_floor = std::min(
+            initial_jacobians[e], epsilon + cell_buffers[e]);
+        min_slack = std::min(min_slack, jacobian - required_floor);
+    }
+    return min_slack;
+}
+
 }  // namespace
 
 SafetyFilterResult apply_safety_filter(
@@ -98,9 +120,10 @@ SafetyFilterResult apply_safety_filter(
 
     const double eps = params.epsilon;
     const double tol_deg = params.tol_deg;
-    const double roundoff_tol = std::max(1.0e-12, 1.0e-9 * std::abs(eps));
+    const double machine_guard = 64.0 * std::numeric_limits<double>::epsilon();
+    const double relative_guard = std::max(params.relative_jacobian_margin, machine_guard);
     std::vector<double> A(n_cells, 0.0), B(n_cells, 0.0), C(n_cells, 0.0),
-        C_tilde(n_cells, 0.0), alpha_e(n_cells, 1.0);
+        C_buffered(n_cells, 0.0), delta_e(n_cells, 0.0), alpha_e(n_cells, 1.0);
     double min_c = std::numeric_limits<double>::infinity();
     double max_abs_disp = 0.0;
 
@@ -136,16 +159,21 @@ SafetyFilterResult apply_safety_filter(
             throw std::invalid_argument(
                 "apply_safety_filter: overflow numerico nei coefficienti del determinante.");
         }
-        C_tilde[e] = std::max(0.0, C[e] - eps);
+        const double local_scale = std::max(std::abs(C[e]), std::abs(eps));
+        delta_e[e] = relative_guard * local_scale;
+        const double buffered_floor = eps + delta_e[e];
+        C_buffered[e] = C[e] - buffered_floor;
         min_c = std::min(min_c, C[e]);
     }
 
-    if (min_c < eps - roundoff_tol) {
+    // Do not silently accept an initially inadmissible mesh, even within a
+    // roundoff tolerance. The buffer only restricts the proposed motion; it
+    // does not relax the physical admissibility threshold epsilon.
+    if (min_c < eps) {
         std::ostringstream msg;
         msg.precision(16);
         msg << "Mesh iniziale non ammissibile per il safety filter: min(J_0)="
-            << std::scientific << min_c << " < epsilon=" << eps
-            << " (tolleranza roundoff=" << roundoff_tol << ").";
+            << std::scientific << min_c << " < epsilon=" << eps << ".";
         throw std::invalid_argument(msg.str());
     }
 
@@ -162,18 +190,16 @@ SafetyFilterResult apply_safety_filter(
         return result;
     }
 
-    // Casi sulla soglia J(0)=epsilon.
+    // Enforce J_e(alpha) >= epsilon + delta_e, where delta_e is a
+    // scale-aware numerical buffer. If the initial cell has no room for the
+    // buffer, freeze the global path at alpha=0 rather than weakening epsilon.
     for (std::size_t e = 0; e < n_cells; ++e) {
         const double a = A[e];
         const double b = B[e];
-        const double c = C_tilde[e];
+        const double c = C_buffered[e];
         double alpha = 1.0;
         if (c <= 0.0) {
-            if (b < 0.0 || (std::abs(b) <= tol_deg && a < 0.0)) {
-                alpha = 0.0;
-            } else if (b > 0.0 && a < 0.0 && b < -a) {
-                alpha = std::clamp(-b / a, 0.0, 1.0);
-            }
+            alpha = 0.0;
         } else if (std::abs(a) < tol_deg) {
             if (b < 0.0 && c + b <= 0.0) {
                 alpha = std::clamp(-c / b, 0.0, 1.0);
@@ -232,17 +258,23 @@ SafetyFilterResult apply_safety_filter(
 
     std::vector<Coord> safe_nodes;
     double min_j_after = minimum_jacobian_for_alpha(nodes, cells, disp, alpha_global, safe_nodes);
-    if (min_j_after < eps - roundoff_tol) {
+    double min_buffered_slack = minimum_buffered_slack(
+        safe_nodes, cells, C, delta_e, eps);
+    if (min_j_after < eps || min_buffered_slack < 0.0) {
         is_safe = false;
         if (alpha_global == 1.0) {
             alpha_global = 1.0 - std::max(params.safety_margin, 1.0e-6);
             min_j_after = minimum_jacobian_for_alpha(nodes, cells, disp, alpha_global, safe_nodes);
+            min_buffered_slack = minimum_buffered_slack(
+                safe_nodes, cells, C, delta_e, eps);
         }
-        while (min_j_after < eps - roundoff_tol && alpha_global > 1.0e-16) {
+        while ((min_j_after < eps || min_buffered_slack < 0.0) && alpha_global > 1.0e-16) {
             alpha_global *= 0.5;
             min_j_after = minimum_jacobian_for_alpha(nodes, cells, disp, alpha_global, safe_nodes);
+            min_buffered_slack = minimum_buffered_slack(
+                safe_nodes, cells, C, delta_e, eps);
         }
-        if (min_j_after < eps - roundoff_tol) {
+        if (min_j_after < eps || min_buffered_slack < 0.0) {
             alpha_global = 0.0;
             safe_nodes = nodes;
             min_j_after = min_c;

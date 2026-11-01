@@ -24,5 +24,5 @@ def test_native_safety_filter_reduces_invalidating_displacement():
     result = apply_native_safety_filter(mesh, disp, epsilon=1e-5, safety_margin=1e-5, lock_boundary_nodes=True)
     assert 0.0 <= result["alpha_global"] <= 1.0
     assert np.isfinite(result["min_jacobian_after"])
-    assert result["min_jacobian_after"] >= 1e-5 - 1e-9
+    assert result["min_jacobian_after"] >= 1e-5
     assert np.all(np.isfinite(result["safe_nodes"]))

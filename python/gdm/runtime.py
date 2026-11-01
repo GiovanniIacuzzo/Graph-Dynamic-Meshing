@@ -88,6 +88,9 @@ class NativeDynamicRuntime:
         self.epsilon = float(safety_cfg.get("epsilon", 1.0e-4))
         self.safety_margin = float(safety_cfg.get("safety_margin", 1.0e-6))
         self.tol_deg = float(safety_cfg.get("tol_deg", 1.0e-12))
+        self.relative_jacobian_margin = float(
+            safety_cfg.get("relative_jacobian_margin", 1.0e-9)
+        )
 
         objective_cfg = self.oracle_cfg.get("objective", self.oracle_cfg)
         self.oracle_lambda_D = float(objective_cfg.get("lambda_D", 0.01))
@@ -126,6 +129,7 @@ class NativeDynamicRuntime:
             epsilon=self.epsilon,
             safety_margin=self.safety_margin,
             tol_deg=self.tol_deg,
+            relative_jacobian_margin=self.relative_jacobian_margin,
             lock_boundary_nodes=False,  # predict_raw azzera già lo spostamento sul bordo
         )
         filter_elapsed = time.perf_counter() - t_filter

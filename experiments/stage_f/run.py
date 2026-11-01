@@ -182,6 +182,9 @@ def _stage_d_config(stage_f: Mapping[str, Any]) -> Dict[str, Any]:
     cfg["geometry"]["safety"]["epsilon"] = float(stage_f["safety"]["epsilon"])
     cfg["geometry"]["safety"]["safety_margin"] = float(stage_f["safety"].get("safety_margin", 1.0e-6))
     cfg["geometry"]["safety"]["tol_deg"] = float(stage_f["safety"].get("tol_deg", 1.0e-12))
+    cfg["geometry"]["safety"]["relative_jacobian_margin"] = float(
+        stage_f["safety"].get("relative_jacobian_margin", 1.0e-9)
+    )
     cfg["stage_d"]["dt"] = float(protocol["dt"])
     cfg["stage_d"]["adapt_interval"] = int(protocol["adapt_interval"])
     # Reuse the solver tolerances and Galerkin choice verified in Stage E1.

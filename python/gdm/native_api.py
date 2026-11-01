@@ -271,6 +271,7 @@ def apply_native_safety_filter_arrays(
     tol_deg: float = 1.0e-12,
     lock_boundary_nodes: bool = True,
     verbose: bool = False,
+    relative_jacobian_margin: float = 1.0e-9,
 ) -> Dict[str, Any]:
     """Applica il filtro di sicurezza C++ a coordinate/connettività NumPy.
 
@@ -287,6 +288,7 @@ def apply_native_safety_filter_arrays(
         tol_deg=tol_deg,
         lock_boundary_nodes=lock_boundary_nodes,
         verbose=verbose,
+        relative_jacobian_margin=relative_jacobian_margin,
     )
 
 
@@ -298,6 +300,7 @@ def apply_native_safety_filter(
     tol_deg: float = 1.0e-12,
     lock_boundary_nodes: bool = False,
     verbose: bool = False,
+    relative_jacobian_margin: float = 1.0e-9,
 ) -> Dict[str, Any]:
     """Applica il filtro C++ e valida forma e valori finiti del risultato."""
     disp = _points_array(displacement, "displacement")
@@ -307,6 +310,7 @@ def apply_native_safety_filter(
     params.epsilon = float(epsilon)
     params.safety_margin = float(safety_margin)
     params.tol_deg = float(tol_deg)
+    params.relative_jacobian_margin = float(relative_jacobian_margin)
     params.lock_boundary_nodes = bool(lock_boundary_nodes)
     params.verbose = bool(verbose)
     params.validate()

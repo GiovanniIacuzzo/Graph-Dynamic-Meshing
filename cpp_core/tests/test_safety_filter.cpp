@@ -81,5 +81,54 @@ int main() {
     GDM_CHECK(res_locked.safe_nodes[1] == valid_nodes[1]);
     GDM_CHECK(res_locked.safe_nodes[2] == valid_nodes[2]);
 
+    // Numerical guard: with no alpha safety contraction, the path is still
+    // constrained by epsilon + a scale-aware determinant buffer.
+    SafetyParameters buffered = params;
+    buffered.epsilon = 0.1;
+    buffered.safety_margin = 0.0;
+    buffered.relative_jacobian_margin = 1.0e-6;
+    const std::vector<MeshState::Coord2D> buffer_nodes = {
+        {0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0}
+    };
+    const std::vector<MeshState::CellConn> buffer_cells = {{0, 1, 2}};
+    const std::vector<MeshState::Coord2D> buffer_disp = {
+        {0.0, 0.0}, {0.0, 0.0}, {0.0, -2.0}
+    };
+    const auto res_buffered = apply_safety_filter(
+        buffer_nodes, buffer_cells, buffer_disp, {0, 1}, buffered);
+    GDM_CHECK(res_buffered.min_jacobian_after > buffered.epsilon);
+    GDM_CHECK(res_buffered.min_jacobian_after >= buffered.epsilon + 0.5e-6);
+    GDM_CHECK(res_buffered.alpha_global > 0.0 && res_buffered.alpha_global < 1.0);
+
+    // If the initial element is admissible but has no room for the numerical
+    // buffer, the filter must preserve the mesh (alpha=0), not relax epsilon.
+    const std::vector<MeshState::Coord2D> near_floor_nodes = {
+        {0.0, 0.0}, {1.0, 0.0}, {0.0, 0.10000000005}
+    };
+    const std::vector<MeshState::Coord2D> near_floor_disp = {
+        {0.0, 0.0}, {0.0, 0.0}, {0.0, -1.0e-3}
+    };
+    buffered.epsilon = 0.1;
+    buffered.relative_jacobian_margin = 1.0e-6;
+    const auto res_near_floor = apply_safety_filter(
+        near_floor_nodes, buffer_cells, near_floor_disp, {0, 1}, buffered);
+    GDM_CHECK(res_near_floor.alpha_global == 0.0);
+    GDM_CHECK(res_near_floor.min_jacobian_after >= buffered.epsilon);
+
+    // An initially inadmissible mesh is rejected strictly, including a
+    // sub-tolerance violation; the filter never treats it as a valid starting point.
+    const std::vector<MeshState::Coord2D> below_floor_nodes = {
+        {0.0, 0.0}, {1.0, 0.0}, {0.0, 0.0999999999999999}
+    };
+    const std::vector<MeshState::Coord2D> below_floor_disp(3, {0.0, 0.0});
+    bool rejected_below_floor = false;
+    try {
+        (void)apply_safety_filter(
+            below_floor_nodes, buffer_cells, below_floor_disp, {0, 1}, buffered);
+    } catch (const std::invalid_argument&) {
+        rejected_below_floor = true;
+    }
+    GDM_CHECK(rejected_below_floor);
+
     return 0;
 }

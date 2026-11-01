@@ -24,6 +24,7 @@ geometry:
     epsilon: 0.0001
     tol_deg: 1.0e-12
     safety_margin: 1.0e-06
+    relative_jacobian_margin: 1.0e-9
     tol_degenerate: 1.0e-14
 field:
   type: gaussian_bump_2d
@@ -221,6 +222,7 @@ self_supervised:
       epsilon: 0.0001
       tol_deg: 1.0e-12
       safety_margin: 1.0e-06
+      relative_jacobian_margin: 1.0e-9
       tol_degenerate: 1.0e-14
   field:
     type: transient_mms_gaussian_sine

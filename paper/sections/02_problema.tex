@@ -49,7 +49,7 @@ Si impone $u_0=u^\star(\cdot,0)$. Poiché $\sin(\pi x)\sin(\pi y)=0$ su ciascun 
 g_D(\bm x,t)=u^\star(\bm x,t)|_{\partial\Omega}\equiv0.
 \label{eq:homogeneous_dirichlet}
 \end{equation}
-Non sono quindi presenti condizioni di Dirichlet non omogenee o dipendenti dal tempo. I nodi di bordo restano fissi e il valore imposto su tali nodi è zero per tutta la simulazione. Le derivate necessarie alla costruzione di $f$ sono analitiche; la soluzione esatta è utilizzata per costruire la forzante e, durante il benchmark, per calcolare gli errori. Come verificato nel percorso di inferenza, essa non viene passata alla GNN come feature.
+Le derivate necessarie alla costruzione di $f$ sono analitiche; la soluzione esatta è utilizzata per costruire la forzante e, durante il benchmark, per calcolare gli errori.
 
 Nella campagna PDE Stage D i coefficienti comuni sono
 \begin{equation}
@@ -71,7 +71,7 @@ M(t)&=\int_\Omega u^\star(\bm x,t)\,d\bm x.
 \end{equation}
 Per il dato omogeneo $u^\star|_{\partial\Omega}=0$, il flusso convettivo al bordo è nullo, ma il flusso diffusivo normale $-\nu\nabla u^\star\cdot\bm n$ non è in generale nullo. La massa non è dunque costante: varia in risposta alla forzante e al flusso diffusivo attraverso il bordo. Questa identità continua definisce il bilancio da usare per una futura verifica discreta; i valori di discrepanza degli incrementi riportati più avanti non costituiscono, da soli, il residuo discreto completo di \eqref{eq:continuous_mass_balance}.
 
-I parametri $\sigma$ e $\beta$ variano tra i casi, secondo gli intervalli riportati nella Sezione~\ref{sec:protocollo}. Il centro della gaussiana segue la traiettoria prescritta $\bm c(t)=(c_x(t),c_y(t))$ con velocità costante $\dot{\bm c}=(0.4/T,0.3/T)=(0.8,0.6)^T$. Essa non coincide con la velocità convettiva $\bm b=(0.4,0.2)^T$. Il profilo gaussiano non è pertanto una soluzione libera dell'equazione di advezione--diffusione trasportata dal campo $\bm b$: il suo moto è imposto dalla costruzione manufatta e compensato dalla forzante $f$. Il benchmark deve essere interpretato come test forzato e controllato di adattività verso una struttura mobile, non come modello di una particella passivamente trasportata dal flusso.
+I parametri $\sigma$ e $\beta$ variano tra i casi, secondo gli intervalli riportati nella Sezione~\ref{sec:protocollo}. Il centro della gaussiana segue la traiettoria prescritta $\bm c(t)=(c_x(t),c_y(t))$ con velocità costante $\dot{\bm c}=(0.4/T,0.3/T)=(0.8,0.6)^T$. Essa non coincide con la velocità convettiva $\bm b=(0.4,0.2)^T$. Il profilo gaussiano non è pertanto una soluzione libera dell'equazione di advezione--diffusione trasportata dal campo $\bm b$: il suo moto è imposto dalla costruzione manufatta e compensato dalla forzante $f$. Il benchmark deve essere interpretato come test forzato e controllato di adattività verso una struttura mobile.
 
 \subsection{Mesh iniziale e spazio agli elementi finiti}
 
@@ -94,7 +94,7 @@ La formulazione debole Euleriana di Galerkin usa lo spazio omogeneo $V_h^0(t)$ s
 =(f,v_h)_\Omega.
 \label{eq:weak_eulerian}
 \end{equation}
-L'integrazione temporale di riferimento è il metodo di Eulero implicito, corrispondente a $\theta=1$, con passo costante $\Delta t=0.005$ e $N_t=100$ passi nell'intervallo $[0,0.5]$. La discretizzazione spaziale è $P_1$. La configurazione usata nei benchmark PDE principali (Stage D e F1) è Galerkin standard. Nel core C++ è stata successivamente introdotta un'opzione SUPG selezionabile anche nel percorso ALE; la sua disponibilità non implica che sia stata attivata nelle campagne D e F1. La campagna E1 ne confronta separatamente la variante Galerkin e quella SUPG. Il parametro di stabilizzazione e il residuo forte sono documentati nell'Appendice~\ref{app:stageef}; i risultati disponibili non mostrano un miglioramento dell'errore per il caso MMS testato e non giustificano l'uso di SUPG come default.
+L'integrazione temporale di riferimento è il metodo di Eulero implicito, corrispondente a $\theta=1$, con passo costante $\Delta t=0.005$ e $N_t=100$ passi nell'intervallo $[0,0.5]$. La discretizzazione spaziale è $P_1$. La configurazione usata nei benchmark PDE principali (Stage D e F1) è Galerkin standard. La variante SUPG è stata valutata separatamente nella campagna E1; non è stata attivata nei benchmark D e F1. Il parametro di stabilizzazione e il residuo forte sono documentati nell'Appendice~\ref{app:stageef}.
 
 \subsection{Metriche di errore}
 
@@ -105,7 +105,7 @@ E_{L^2}(t_n)=
 {\norm{u^\star(\cdot,t_n)}_{L^2(\Omega)}}.
 \label{eq:rel_l2}
 \end{equation}
-Per la componente in $H^1$ il codice calcola la seminorma, non la norma completa. Si definisce pertanto
+Per la componente in $H^1$ si considera la seminorma del gradiente, non la norma completa. Si definisce pertanto
 \begin{equation}
 \begin{aligned}
 |v|_{H^1(\Omega)}&:=\norm{\nabla v}_{L^2(\Omega)},\\
@@ -115,7 +115,7 @@ E_{|H^1|}(t_n)&=
 \end{aligned}
 \label{eq:rel_h1}
 \end{equation}
-La definizione coincide con l'implementazione, che integra il quadrato della differenza tra i gradienti discreto ed esatto e lo normalizza con la seminorma del gradiente della soluzione manufatta. I risultati indicati nel seguito come errori $H^1$ devono quindi essere interpretati come errori relativi in seminorma $H^1$.
+La quantità integra il quadrato della differenza tra i gradienti discreto ed esatto e lo normalizza con la seminorma del gradiente della soluzione manufatta. I risultati indicati nel seguito come errori $H^1$ sono quindi errori relativi in seminorma $H^1$.
 L'errore temporale medio è calcolato con la regola composita dei trapezi sugli $N_t+1$ valori temporali:
 \begin{equation}
 \begin{aligned}

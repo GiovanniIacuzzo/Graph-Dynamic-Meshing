@@ -57,11 +57,16 @@ struct SafetyParameters {
     double epsilon{1.0e-4};
     double tol_deg{1.0e-12};
     double safety_margin{1.0e-6};
+    // Relative numerical buffer added to the determinant floor on each cell.
+    // delta_e = max(relative_jacobian_margin, 64*eps_machine)
+    //           * max(|J_e(0)|, epsilon).
+    double relative_jacobian_margin{1.0e-9};
     bool lock_boundary_nodes{false};
     bool verbose{false};
 
     void validate() const {
-        if (!std::isfinite(epsilon) || !std::isfinite(tol_deg) || !std::isfinite(safety_margin)) {
+        if (!std::isfinite(epsilon) || !std::isfinite(tol_deg) ||
+            !std::isfinite(safety_margin) || !std::isfinite(relative_jacobian_margin)) {
             throw std::invalid_argument("SafetyParameters: parametri non finiti.");
         }
         if (epsilon <= 0.0) {
@@ -72,6 +77,10 @@ struct SafetyParameters {
         }
         if (safety_margin < 0.0 || safety_margin >= 0.5) {
             throw std::invalid_argument("SafetyParameters: safety_margin deve appartenere a [0.0, 0.5).");
+        }
+        if (relative_jacobian_margin < 0.0 || relative_jacobian_margin >= 0.1) {
+            throw std::invalid_argument(
+                "SafetyParameters: relative_jacobian_margin deve appartenere a [0.0, 0.1).");
         }
     }
 };

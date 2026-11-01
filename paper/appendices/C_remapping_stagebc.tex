@@ -1,76 +1,24 @@
-\section{Diagnostica supplementare dei trasferimenti e della formulazione ALE}
-\label{app:transfer}
+\section{Diagnostiche supplementari di trasferimento e sviluppo}
+\label{app:remapping}
 
-\subsection{Errore e costo dei trasferimenti}
+La campagna B confronta trasferimento puntuale $P_1$ e proiezione $L^2$ sugli stessi campi e mesh target. Nel campione di dieci finestre, l'errore di trasferimento mediano è 5.78\% per interpolazione $P_1$ e 3.81\% per proiezione $L^2$; la discrepanza di massa è rispettivamente $5.89\times10^{-3}$ e $8.12\times10^{-5}$. I tempi mediani sono 1.07 ms e 13.32 ms. Il risultato evidenzia un compromesso tra accuratezza del trasferimento e costo.
 
-Il benchmark dedicato agli operatori di trasferimento utilizza dieci target geometrici, mesh con 1089 nodi e 2048 triangoli e dieci ripetizioni temporali per misura. Le mediane riportate sono:
-\begin{center}
-\small
-\begin{tabularx}{\columnwidth}{Xrr}
-\toprule
-Metrica & $P_1$ & $L^2$\\
-\midrule
-Errore relativo $L^2$ & 5.779\% & 3.811\%\\
-Discrepanza relativa di massa & $5.892\times10^{-3}$ & $8.118\times10^{-5}$\\
-Tempo mediano per trasferimento & 1.073 ms & 13.320 ms\\
-\bottomrule
-\end{tabularx}
-\end{center}
-La proiezione $L^2$ riduce l'errore e la discrepanza di massa nel campione diagnostico, ma costa circa 12.4 volte il trasferimento $P_1$. La discrepanza di massa qui riportata è quella definita nel benchmark di trasferimento; non viene equiparata a un residuo del bilancio PDE.
+Nel prototipo transiente C, il confronto tra mesh fissa, remapping e ALE non ha mostrato un miglioramento robusto della GNN statica sull'errore PDE. La Figura~\ref{fig:app_stageb_transfer} documenta l'andamento dell'errore nativo nei test di trasferimento; la Figura~\ref{fig:app_stagec_error} riporta il benchmark transiente del prototipo. I risultati B--C motivano l'uso di un controller aggiornato lungo la traiettoria e di una formulazione ALE nativa, ma non vengono combinati con i risultati F1.
 
-\subsection{Convergenza, qualità della mesh e tracking}
-
-\begin{figure}[!htbp]
-\centering
-\IfFileExists{images/stage_a/stage_a_element_quality.pdf}{%
-  \includegraphics[width=0.95\columnwidth,height=0.28\textheight,keepaspectratio]{images/stage_a/stage_a_element_quality.pdf}%
-}{%
-  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
-  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
-  \scriptsize\nolinkurl{images/stage_a/stage_a_element_quality.pdf}
-  \end{minipage}}%
-}
-\caption{Qualità degli elementi nel benchmark statico Stage A.}
-\label{fig:app_stagea_element}
-\end{figure}
-\begin{figure}[!htbp]
-\centering
-\IfFileExists{images/stage_a/stage_a_runtime_comparison.pdf}{%
-  \includegraphics[width=0.95\columnwidth,height=0.28\textheight,keepaspectratio]{images/stage_a/stage_a_runtime_comparison.pdf}%
-}{%
-  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
-  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
-  \scriptsize\nolinkurl{images/stage_a/stage_a_runtime_comparison.pdf}
-  \end{minipage}}%
-}
-\caption{Tempo di inferenza e costo della pipeline statica Stage A.}
-\label{fig:app_stagea_runtime}
-\end{figure}
-\begin{figure}[!htbp]
-\centering
-\IfFileExists{images/stage_a/fig3_safety_curve.pdf}{%
-  \includegraphics[width=0.95\columnwidth,height=0.28\textheight,keepaspectratio]{images/stage_a/fig3_safety_curve.pdf}%
-}{%
-  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\columnwidth}
-  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
-  \scriptsize\nolinkurl{images/stage_a/fig3_safety_curve.pdf}
-  \end{minipage}}%
-}
-\caption{Curva di sicurezza geometrica del filtro nel benchmark Stage A.}
-\label{fig:app_stagea_safety}
-\end{figure}
 \begin{figure*}[!t]
 \centering
-\IfFileExists{images/stage_a/fig4_runtime_scaling.pdf}{%
-  \includegraphics[width=0.95\textwidth,height=0.32\textheight,keepaspectratio]{images/stage_a/fig4_runtime_scaling.pdf}%
-}{%
-  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
-  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
-  \scriptsize\nolinkurl{images/stage_a/fig4_runtime_scaling.pdf}
-  \end{minipage}}%
-}
-\caption{Andamento del costo di inferenza al variare della dimensione del grafo nel test Stage A.}
-\label{fig:app_stagea_scaling}
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\includegraphics[width=\linewidth,height=0.16\textheight,keepaspectratio]{images/stage_b/stage_b_native_error_curves.pdf}
+\captionof{figure}{Curve d'errore dei test di trasferimento Stage B.}
+\label{fig:app_stageb_transfer}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\includegraphics[width=\linewidth,height=0.16\textheight,keepaspectratio]{images/stage_c/fig_c3_dynamic_error.pdf}
+\captionof{figure}{Errore PDE nel benchmark transiente Stage C, prototipo preliminare.}
+\label{fig:app_stagec_error}
+\end{minipage}
 \end{figure*}
 
-La campagna Stage C ha inoltre verificato la risposta della discretizzazione ALE a differenti configurazioni di movimento, la qualità geometrica lungo la traiettoria e il costo dei componenti. I relativi risultati principali sono già sintetizzati nella Sezione~\ref{sec:stageabc}; in questa appendice si conservano le figure complementari per documentare le diagnostiche che non sono centrali nella narrazione dei risultati PDE Stage D.
+Le ulteriori diagnostiche di validità geometrica e costo del prototipo C sono mantenute come asset supplementari nel pacchetto sorgente e nel repository; non vengono usate per formulare claim sulla pipeline finale.

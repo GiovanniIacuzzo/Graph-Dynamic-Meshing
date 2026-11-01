@@ -3,7 +3,8 @@
 experiment:
   name: stage_f1_classical_r_refinement_vs_gdm
   seed: 3701
-  output_dir: results/stage_f1
+  # A separate directory is mandatory for the buffered-filter campaign.
+  output_dir: results/stage_f1_buffered
   cpu_threads: 1
 
 source:
@@ -47,3 +48,4 @@ safety:
   epsilon: 0.0001
   safety_margin: 0.000001
   tol_deg: 1.0e-12
+  relative_jacobian_margin: 1.0e-9

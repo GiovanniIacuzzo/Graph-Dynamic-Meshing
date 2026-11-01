@@ -1,113 +1,135 @@
-\section{Dettagli supplementari delle campagne E1 e F1}
-\label{app:stageef}
+\section{Dettagli matematici e numerici delle campagne E1 e F1}
+\label{app:stageef}\label{app:solver_supplement}
 
-\subsection{Definizione del Péclet direzionale}
+\subsection{Numero di Péclet direzionale}
 
-Per un triangolo $K$ con funzioni di forma $\varphi_i$ e velocità relativa locale $\boldsymbol\beta=\bm b-\bm w$, la lunghezza direzionale utilizzata in E1 è
-\[
-h_K^\beta=\frac{2\norm{\boldsymbol\beta}}{\sum_{i=1}^{3}|\boldsymbol\beta\cdot\nabla\varphi_i|}.
-\]
-La quantità ha dimensione di lunghezza; il numero $Pe_K=\norm{\boldsymbol\beta}h_K^\beta/(2\nu)$ è adimensionale. Quando $\norm{\boldsymbol\beta}$ è numericamente nulla si pone $Pe_K=0$ e la lunghezza direzionale non viene utilizzata. Per ALE, $\bm w$ è stimata dalla velocità nodale impiegata nel solver durante il passo, non da un valore globale medio.
+Per la mesh ALE si considera la velocità relativa $\boldsymbol\beta=\bm b-\bm w$ e, per ogni elemento $K$,
+\begin{equation}
+Pe_K=\frac{\norm{\boldsymbol\beta}h_K^\beta}{2\nu},\qquad
+h_K^\beta=\frac{2\norm{\boldsymbol\beta}}{\sum_i|\boldsymbol\beta\cdot\nabla\varphi_i|}.
+\label{eq:peclet_local}
+\end{equation}
+Per velocità relativa nulla si pone $Pe_K=0$. Sulla mesh fissa, $Pe_K=7.8125$; per ALE, al tempo $t=0.25$, mediana, 95-esimo percentile e massimo sono rispettivamente 8.91, 10.84 e 11.11.
+
+
+\subsection{Confronto Galerkin/SUPG e work--precision}
+
+La SUPG è stata confrontata con Galerkin su mesh $32\times32$ e $\Delta t=0.0025$. Nella configurazione fissa l'errore $L^2$ assoluto medio passa da $4.262\times10^{-3}$ a $4.302\times10^{-3}$; nel test ALE mobile, basato su una deformazione armonica prescritta e indipendente da GDM, passa da $4.597\times10^{-3}$ a $4.653\times10^{-3}$. Non emerge un miglioramento di accuratezza nella configurazione esaminata. La deformazione armonica non è una prova di convergenza ALE mobile.
+
+
+Il work--precision a $\Delta t=0.0025$ usa un warm-up escluso e cinque ripetizioni di timing: gli errori medi sono $1.074\times10^{-2}$, $4.262\times10^{-3}$ e $3.048\times10^{-3}$ per $16^2$, $32^2$ e $64^2$; i tempi mediani sono 0.059, 0.200 e 0.735 s. La curva è operativa a passo fisso e non isola completamente l'errore spaziale a $64^2$.
+
+\begin{figure*}[!t]
+\centering
+\begin{minipage}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth,height=0.14\textheight,keepaspectratio]{images/stage_e/peclet_distribution.pdf}
+\captionof{figure}{Péclet direzionale su mesh fissa e ALE.}
+\label{fig:app_peclet}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth,height=0.14\textheight,keepaspectratio]{images/stage_e/supg_comparison.pdf}
+\captionof{figure}{Confronto Galerkin/SUPG nella configurazione E1.}
+\label{fig:app_supg}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth,height=0.14\textheight,keepaspectratio]{images/stage_e/work_precision_galerkin_temporally_resolved.pdf}
+\captionof{figure}{Work--precision Galerkin su mesh fisse.}
+\label{fig:app_workprecision}
+\end{minipage}
+\end{figure*}
+
+
 
 \subsection{Lemma di esattezza del punto medio per la D-GCL}
 
-Sia $\widehat K$ un triangolo di riferimento e sia $F_K(t)=F_K^n+(t-t_n)G_K$ la matrice jacobiana della mappa affine verso l'elemento fisico durante un singolo passo $[t_n,t_{n+1}]$, con $\Delta t=t_{n+1}-t_n$. Si assumono: (i) elementi affini triangolari e base conforme $P_1$; (ii) coordinate nodali lineari nel tempo sul singolo passo, con velocità nodale costante nell'intervallo; (iii) orientazione positiva, $J_K(t)=\det F_K(t)>0$ per ogni $t$ nel passo; (iv) assemblaggio coerente dei termini geometrici alla configurazione intermedia e quadratura spaziale esatta per gli integrandi geometrici (grado polinomiale almeno due).
-
-\begin{lemma}[Identità geometrica al punto medio]
-Sotto le ipotesi precedenti, in aritmetica reale la matrice di massa elementare $M_K(t)$ soddisfa
-\[
-\frac{M_K(t_{n+1})-M_K(t_n)}{\Delta t}
-=\dot M_K(t_{n+1/2}),
-\]
-e l'operatore cinematico di mesh assemblato con la regola del punto medio soddisfa, dopo assemblaggio sugli elementi,
-\[
-\left[\frac{M^{n+1}-M^n}{\Delta t}
-+C_{\mathrm{mesh}}^{n+1/2}\right]\bm 1=\bm 0.
-\]
-La relazione è un'identità geometrica discreta; non implica da sola stabilità, convergenza della soluzione PDE o conservazione della massa fisica per una PDE forzata.
+\begin{lemma}[Esattezza geometrica nel singolo passo]
+Sia $K(t)$ un triangolo affine $P_1$ in due dimensioni, i cui nodi seguono traiettorie lineari nel tempo su $[t_n,t_{n+1}]$. Si assuma che il Jacobiano orientato resti positivo nell'intero intervallo, che la velocità nodale sia costante a tratti e che i contributi geometrici siano integrati con quadratura spaziale esatta di grado almeno due. Allora la regola del punto medio integra esattamente, nel singolo passo, la derivata temporale della matrice di massa geometrica associata all'elemento.
 \label{lem:dgcl_midpoint}
 \end{lemma}
 
 \begin{proof}
-Per un elemento affine in due dimensioni, $F_K(t)$ dipende linearmente dal tempo. Il determinante di una matrice $2\times2$ i cui elementi sono affini in $t$ è un polinomio di grado al più due; pertanto $J_K(t)=\det F_K(t)$ è quadratico e $\dot J_K(t)$ è affine nel tempo. Le funzioni di forma $P_1$ sono fisse nella coordinata di riferimento e la matrice di massa elementare può essere scritta come
-\[
-(M_K(t))_{ij}=\int_{\widehat K}
-\widehat\varphi_i\widehat\varphi_j J_K(t)\,d\widehat x.
-\]
-Ne segue che ogni componente di $\dot M_K(t)$ è affine nel tempo. Per ogni funzione affine $q(t)$ vale l'identità esatta
-\[
-\frac{1}{\Delta t}\int_{t_n}^{t_{n+1}}q(t)\,dt
-=q(t_{n+1/2}),
-\]
-che, applicata a $q=\dot M_K$, dà la prima relazione.
-
-Per la seconda relazione si usa la partizione dell'unità $\sum_j\varphi_j=1$, da cui $\sum_j\nabla\varphi_j=\bm0$. Il termine advettivo di mesh moltiplicato per il vettore unitario si annulla; il termine di divergenza produce l'integrale di $\varphi_i\nabla\cdot\bm w$. D'altra parte, la formula di derivazione del determinante dà $\dot J_K=J_K\operatorname{tr}(F_K^{-1}G_K)=J_K\nabla\cdot\bm w$ nella configurazione di riferimento. La derivata della somma di riga della matrice di massa coincide quindi con il contributo di divergenza della velocità di mesh. La valutazione a metà passo è esatta per l'affinità temporale di $\dot J_K$ appena dimostrata; la quadratura spaziale assunta rende esatti gli integrali elementari. Con il segno $C_{\mathrm{mesh}}=-C_{\mathrm{adv}}^w-M_{\mathrm{div}w}$ si ottiene l'identità locale e, sommando sugli elementi, quella assemblata.
+La mappa isoparametrica $F_K(\hat{\bm x},t)$ è affine rispetto alle coordinate di riferimento e lineare in $t$. Il gradiente $J_K(t)=\nabla_{\hat{\bm x}}F_K(t)$ è quindi una matrice $2\times2$ affine nel tempo. Il determinante $\det J_K(t)$ è un polinomio in $t$ di grado al più due; di conseguenza la sua derivata è affine. La regola del punto medio è esatta per polinomi di grado non superiore a uno e integra quindi esattamente la variazione del determinante nel passo. Poiché le funzioni di forma $P_1$ sono fisse nella coordinata di riferimento, la matrice di massa geometrica è il prodotto tra integrali di forma e determinante Jacobiano. La quadratura spaziale esatta e l'identità precedente implicano l'esattezza dell'incremento geometrico della matrice di massa.
 \end{proof}
 
-\paragraph{Portata del lemma.}
-L'esattezza riguarda il contributo geometrico associato al moto nodale lineare e alla discretizzazione $P_1$ nelle ipotesi indicate. Non è una stima a priori dell'errore della PDE, non tratta la convergenza in $h$ o $\Delta t$, e non implica che il residuo floating-point sia nullo. Il test numerico E1 riporta separatamente residuo element-wise, residuo algebrico, errore free-stream e residuo del solve lineare.
+Il lemma riguarda l'identità geometrica discreta sotto le ipotesi indicate. Non implica stabilità, convergenza del solver ALE, conservazione della massa della PDE forzata o positività in aritmetica floating-point.
 
-\subsection{Funzionali e monitor MMPDE usati in F1}
+\subsection{Monitor MMPDE e selezione su validation}
 
-Sia $\widehat K$ un elemento di riferimento e $F_K=\partial\bm x/\partial\widehat{\bm x}$ la mappa geometrica, con $j_K=\det F_K>0$. Sia $G_K$ un monitor simmetrico definito positivo, $g_K=\det G_K$, $\gamma=nq/2$ e $\bar G_K=g_K^{-1/(2\gamma)}G_K$. La funzionale discreta valutata è
-\begin{equation}
-\begin{aligned}
-I_h(X;G)=\sum_{K\in\mathcal T_h}|\widehat K|\Big[&
-\theta j_K\sqrt{g_K}\,
-\mathrm{tr}\!\left(F_K^{-1}\bar G_K^{-1}F_K^{-T}\right)^\gamma\\
-&+(1-2\theta)\frac{n^\gamma}{j_K\sqrt{g_K}}\Big].
-\end{aligned}
-\end{equation}
-con $n=q=2$, $\gamma=2$ e $\theta=0.25$. La pseudo-evoluzione discreta usa
-\[
-\frac{dX}{ds}=-M_{\mathrm{lump}}^{-1}\nabla_X I_h,
-\]
-con nodi di bordo bloccati e line-search di Armijo. Il monitor viene congelato nel singolo solve di mesh e aggiornato al successivo evento fisico.
-
-I monitor sono $G_H=I+\alpha|H_h|$, $G_A=I+\alpha\nabla u_h\nabla u_h^T$ e $G_W=\sqrt{\det(G_A)}I$. Il campo Hessiano $H_h$ è recuperato dai gradienti nodali numerici mediante fit least-squares locale; non coincide con l'Hessiano elementare di una funzione affine $P_1$.
-
-\subsection{Griglia di selezione dei parametri MMPDE su validation}
-
-La Tabella~\ref{tab:f1_alpha_validation} riporta tutti i candidati testati. L'errore è la media dell'errore relativo $L^2$ integrato sui 12 casi validation, espresso in percentuale. La colonna ``cap'' riporta il numero di eventi (su 120 per candidato) che hanno raggiunto il limite di 200 iterazioni. I valori selezionati per F1 sono quelli con errore medio più basso all'interno di ciascuna griglia discreta.
+I monitor classici sono costruiti dal campo FEM corrente:
+\begin{align}
+G_{\mathrm{arc}}&=I+\alpha\nabla u_h\nabla u_h^T,\\
+G_{\mathrm{W}}&=\sqrt{\det(G_{\mathrm{arc}})}\,I,\\
+G_{\mathrm{H}}&=I+\alpha|H_h|.
+\end{align}
+L'Hessiano è ricostruito ai nodi mediante least-squares pesato sui patch a due anelli, poiché l'Hessiano elementare di un campo $P_1$ è nullo all'interno di ciascun elemento. I monitor sono simmetrizzati, proiettati su matrici definite positive e smussati; l'evoluzione pseudo-temporale usa gradienti discreti, precondizionamento mass-lumped, bordo vincolato e line-search. Il budget è 200 iterazioni per evento. Sono stati raggiunti i limiti in 19/280 eventi Winslow, 2/280 arc-length e 5/280 Hessian-based; questo non equivale a convergenza certificata.
 
 \begin{table*}[!t]
 \centering\small
-\caption{Griglia di intensità dei monitor classici valutata sui 12 casi validation. Nessun valore è ottimo continuo: la selezione è limitata ai quattro candidati elencati per ciascun monitor.}
+\caption{Griglia discreta di selezione dell'intensità dei monitor sulla validation ($n=12$). I valori sono quelli valutati, non una ricerca continua.}
 \label{tab:f1_alpha_validation}
-\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}llrrr}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr}
 \toprule
 Monitor & $\alpha$ & Errore medio $L^2$ [\%] & Eventi al cap /120 & Esito\\
 \midrule
 Winslow & 0.0100 & 8.1201 & 0 & \\
 Winslow & 0.0250 & 8.0854 & 1 & \\
 Winslow & 0.0500 & 8.0509 & 0 & \\
-Winslow & 0.1000 & 8.0098 & 5 & Selezionato \\
+Winslow & 0.1000 & 8.0098 & 5 & Selezionato\\
 \midrule
 Arc-length & 0.0100 & 8.0939 & 0 & \\
-Arc-length & 0.0250 & 8.0566 & 0 & Selezionato \\
+Arc-length & 0.0250 & 8.0566 & 0 & Selezionato\\
 Arc-length & 0.0500 & 8.0934 & 0 & \\
 Arc-length & 0.1000 & 8.4114 & 4 & \\
 \midrule
 Hessian & 0.0001 & 8.1491 & 0 & \\
 Hessian & 0.0005 & 8.1476 & 0 & \\
 Hessian & 0.0010 & 8.1434 & 0 & \\
-Hessian & 0.0050 & 8.1290 & 1 & Selezionato \\
+Hessian & 0.0050 & 8.1290 & 1 & Selezionato\\
 \bottomrule
 \end{tabular*}
 \end{table*}
 
-I tre valori selezionati sono quindi minimi empirici sulla griglia finita. Non sono disponibili curve di sensibilità più fitte o una verifica di stabilità della scelta aumentando il budget iterativo; i test held-out non sono stati utilizzati per scegliere $\alpha$.
+\subsection{Risposta descrittiva al parametro \texorpdfstring{$\sigma$}{sigma}}
 
-\subsection{Statistiche appaiate F1}
+I 28 casi F1 sono ordinati per $\sigma$ e suddivisi in quattro gruppi consecutivi di sette casi. La tabella riporta riduzioni medie appaiate; si tratta di statistiche descrittive post hoc, non di una legge causale. Il parametro $\beta$ varia simultaneamente.
+\begin{table}[!t]
+\centering\scriptsize
+\caption{Riduzione relativa media dell'errore integrato di GDM nei gruppi ordinati per $\sigma$ del test F1.}
+\label{tab:f1_sigma_groups}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Gruppo & Intervallo $\sigma$ & Fixed [\%] & Winslow [\%] & Arc-length [\%] & Hessian [\%]\\
+\midrule
+Q1 & [0.02236, 0.03037] & 6.80 & 3.41 & 6.15 & 5.97\\
+Q2 & [0.03115, 0.05436] & 7.28 & 5.34 & 6.73 & 6.75\\
+Q3 & [0.05764, 0.08794] & 8.73 & 7.31 & 7.35 & 8.68\\
+Q4 & [0.08887, 0.10339] & 9.34 & 8.33 & 7.69 & 9.82\\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
 
-L'endpoint primario è l'errore relativo $L^2$ integrato nel tempo. Per ogni baseline e coorte viene calcolata la riduzione relativa appaiata caso per caso; il bootstrap ricampiona i casi, non i tempi né le ripetizioni temporali. La famiglia Holm contiene 12 confronti: quattro baseline e tre coorti (insieme dei 28 casi, test interpolativo e test estrapolativo). I $p$-value sono a due code. Nei confronti complessivi tutti i 28 casi hanno differenza concorde a favore di GDM; il valore grezzo $2/2^{28}=7.45\times10^{-9}$ è il minimo esatto per tale configurazione di segni. Il valore corretto $8.94\times10^{-8}$ è il corrispondente risultato della correzione Holm sulla famiglia di 12 test. Gli intervalli bootstrap non misurano la variabilità tra seed del modello: è stato valutato un singolo checkpoint.
+\subsection{Definizioni del tracking e del filtro}
 
-\subsection{Tracking e filtro: definizioni della diagnostica validation}
+La corona diagnostica è definita da $0.5\sigma\le r\le2\sigma$ rispetto al centro gaussiano mobile. Indicando con $\mathcal K(t)$ l'insieme degli elementi e con $\mathcal K_A(t)$ quelli il cui baricentro ricade nella corona $A_\sigma(t)$, l'arricchimento di densità è
+\begin{equation}
+E_\rho(t)=\frac{|\mathcal K_A(t)|/|\mathcal K(t)|}{|A_\sigma(t)|/|\Omega|}.
+\label{eq:annular_enrichment}
+\end{equation}
+Il denominatore normalizza la frazione di elementi rispetto alla sola frazione di area occupata dalla corona, intersecata con il dominio. Un valore maggiore di uno indica una concentrazione di elementi nella regione, non necessariamente una riduzione uniforme della dimensione degli elementi. Il rapporto $R_h=\bar h_\Omega/\bar h_A$ confronta le scale caratteristiche globali e locali; analogamente, $R_h>1$ è coerente con elementi mediamente più piccoli nella corona. La distanza tra il centro gaussiano e il centroide diagnostico della concentrazione è espressa in unità di $\sigma$. Queste quantità sono state calcolate su quattro traiettorie validation, con 404 snapshot complessivi, e non costituiscono statistiche held-out.
 
-La corona di tracking è $\mathcal A(t)=\{\bm x:0.5\sigma\le\norm{\bm x-\bm c(t)}\le2\sigma\}$, valutata attraverso i centroidi degli elementi. L'arricchimento di densità è il rapporto tra la frazione di elementi i cui centroidi appartengono alla corona e la frazione geometrica di area occupata dalla corona. Il rapporto lineare di raffinamento è $h_{\mathrm{globale}}/h_{\mathrm{corona}}$. Questi indicatori descrivono una concentrazione relativa e non una norma di errore PDE.
+Nel campione osservato, l'arricchimento mediano è $1.213$ e il rapporto mediano $R_h$ è $1.111$. La distanza normalizzata centroide--sorgente ha mediana $0.49\sigma$ sull'intera sequenza e $0.61\sigma$ agli istanti finali. Le misure documentano una risposta locale della risoluzione alla regione mobile, ma anche un inseguimento non esatto: l'arricchimento è moderato e la distanza non si annulla. La lettura va inoltre distinta dal requisito, non necessario per una mesh $r$-adattiva, di collocare un vertice esattamente nel massimo del campo. La diagnostica valuta la distribuzione degli elementi intorno alla regione localizzata, non la coincidenza tra un nodo e il picco della soluzione.
 
-Il fattore $\alpha$ è globale per evento e $\Delta X_{\mathrm{safe}}=\alpha\Delta X_{\mathrm{raw}}$. Nella diagnostica validation sono stati analizzati quattro casi (40 eventi, 404 snapshot): 32 eventi hanno un intervento, la mediana di $\alpha$ è 0.423, il rapporto aggregato $\sum\norm{\Delta X_{\mathrm{safe}}}/\sum\norm{\Delta X_{\mathrm{raw}}}$ è 0.481 e 16 proposte raw contengono elementi invertiti. Dopo il filtro non sono registrate inversioni o degenerazioni. Il minimo Jacobiano safe è $9.999999999999975\times10^{-5}$, con slack di circa $-2.57\times10^{-19}$ rispetto a $10^{-4}$. Questo dato evidenzia la necessità di distinguere l'ammissibilità in aritmetica esatta dal test numerico floating-point e non viene nascosto tramite una modifica retroattiva della soglia.
+Il filtro applica un fattore globale $\alpha\in[0,1]$ al segmento tra mesh corrente e proposta raw,
+\begin{equation}
+\bm X(\alpha)=\bm X^n+\alpha\,\Delta\bm X_{\mathrm{raw}},\qquad
+J_K(\alpha)=A_K\alpha^2+B_K\alpha+C_K.
+\label{eq:filter_path_polynomial}
+\end{equation}
+Per elementi affini $P_1$, il determinante orientato è quadratico lungo il segmento. Il fattore accettato è limitato dal primo vincolo di ammissibilità incontrato considerando tutti gli elementi, con la convenzione di blocco dei nodi di bordo. Si tratta di un limitatore globale della lunghezza del passo: una singola cella può quindi ridurre lo spostamento di tutti i nodi interni, anche quando la cella limitante è lontana dalla regione di interesse.
 
-\subsection{Tempi e stato dei dati F1}
-
-La campagna F1 contiene 140 righe di accuratezza (28 casi per cinque strategie), 840 ripetizioni temporali e 840 eventi per i tre controller classici (280 eventi ciascuno). In 26 dei 840 eventi MMPDE è stato raggiunto il limite di 200 iterazioni: 19 per Winslow, 2 per arc-length e 5 per Hessian-based. Non sono state registrate line-search fallite e l'energia è risultata monotona negli eventi. Questi dati descrivono l'esito al budget massimo adottato e non certificano la convergenza di ogni solve.
+Nelle 40 finestre diagnostiche validation il filtro interviene in 32 eventi ($80\%$); la mediana di $\alpha$ è $0.423$, il quinto percentile è $3.29\times10^{-6}$ e il rapporto mediano tra norma dello spostamento accettato e proposta raw è $0.481$. Le proposte raw contengono elementi invertiti in 16 eventi, mentre non se ne osservano dopo il filtro. Questi dati mostrano che il filtro modifica in modo sostanziale una parte delle proposte, ma non dimostrano che ogni intervento sia causato da un'inversione già presente: il vincolo agisce lungo l'intero percorso. Il minimo Jacobiano post-filtro registrato, $9.999999999999865\times10^{-5}$ per $\epsilon=10^{-4}$, differisce dalla soglia di circa $1.35\times10^{-18}$. La discrepanza è compatibile con l'arrotondamento in doppia precisione e impedisce di interpretare il filtro come garanzia stretta in aritmetica floating-point.

@@ -258,7 +258,7 @@ def test_safety_filter_raw_vs_post_filter_metrics_and_exact_alpha_application() 
     safe_geom = compute_native_mesh_metrics(safe_mesh)
     post_inadm = int(
         np.sum(
-            (np.asarray(safe_geom["jacobians"]) < epsilon - 1.0e-10)
+            (np.asarray(safe_geom["jacobians"]) < epsilon)
             | np.asarray(safe_geom["inverted"])
             | np.asarray(safe_geom["degenerate"])
         )
@@ -266,7 +266,7 @@ def test_safety_filter_raw_vs_post_filter_metrics_and_exact_alpha_application() 
     assert post_inadm == 0
     assert int(safe_geom["num_inverted"]) == 0
     assert int(safe_geom["num_degenerate"]) == 0
-    assert float(safe_geom["min_jacobian"]) >= epsilon - 1.0e-10
+    assert float(safe_geom["min_jacobian"]) >= epsilon
 
 
 def test_discrete_mass_quadrature_and_pure_gcl_free_stream_identity() -> None:
@@ -275,7 +275,16 @@ def test_discrete_mass_quadrature_and_pure_gcl_free_stream_identity() -> None:
     mesh0 = NativeMeshAdapter.from_domain(cfg["geometry"]["domain"], nx=8, ny=8)
     pde = create_pde_model(bx=0.4, by=0.2, nu=1.0e-3, sigma=0.06, beta=0.5, T=0.025)
     fem_solver = create_fem_solver(mesh0, pde)
-    ale_solver = create_ale_solver(pde, nu=1.0e-3, bx=0.4, by=0.2)
+    # This test isolates the geometric conservation identity from Krylov
+    # stopping error.  The direct solve is inexpensive for this 8x8 mesh and
+    # leaves the production GMRES defaults unchanged.
+    ale_solver = create_ale_solver(
+        pde,
+        nu=1.0e-3,
+        bx=0.4,
+        by=0.2,
+        linear_solver_config={"use_direct_solver": True},
+    )
 
     u0 = np.asarray(pde.evaluate_solution(mesh0.nodes, 0.0), dtype=np.float64)
     m_api = compute_native_discrete_mass(mesh0, u0)
@@ -292,8 +301,18 @@ def test_discrete_mass_quadrature_and_pure_gcl_free_stream_identity() -> None:
     u_next, diag = ale_solver.step_ale(
         mesh0.core, mesh1.core, u_const, 0.005, 0.005, pure_gcl=True, enforce_dirichlet=False
     )
-    assert np.max(np.abs(np.asarray(u_next) - 1.0)) < 1.0e-12
-    assert abs(float(diag.discrete_mass_next) - float(diag.discrete_mass_n)) < 1.0e-13
+    free_stream_error = float(np.max(np.abs(np.asarray(u_next) - 1.0)))
+    assert free_stream_error < 1.0e-12, (
+        "Pure D-GCL free-stream error exceeds tolerance: "
+        f"error={free_stream_error:.3e}, "
+        f"linear_solver_residual={float(diag.linear_solver_residual):.3e}, "
+        f"algebraic_gcl_residual={float(diag.algebraic_gcl_residual_linf):.3e}"
+    )
+    mass_drift = abs(float(diag.discrete_mass_next) - float(diag.discrete_mass_n))
+    assert mass_drift < 1.0e-13, (
+        f"Pure D-GCL discrete mass drift={mass_drift:.3e}; "
+        f"linear_solver_residual={float(diag.linear_solver_residual):.3e}"
+    )
     assert float(diag.algebraic_gcl_residual_linf) < 1.0e-12
 
 
