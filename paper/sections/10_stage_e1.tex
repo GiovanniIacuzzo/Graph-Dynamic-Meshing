@@ -57,7 +57,7 @@ $64^2$ & 4225 & $7.216\times10^{-4}$ & 1.834$^\dagger$ & $1.743\times10^{-1}$ & 
 \parbox{0.98\textwidth}{\footnotesize $^\dagger$ L'ordine tra $32^2$ e $64^2$ è riportato come valore osservato, ma non è considerato spazialmente isolato perché $\rho_t$ supera la soglia del 10\%. La coppia $16^2$--$32^2$ soddisfa il criterio operativo; la convergenza spaziale non è pertanto ancora chiusa su tre livelli.}
 \end{table*}
 
-Per $P_1$ e una soluzione sufficientemente regolare ci si attende asintoticamente $E_{L^2}=O(h^2)$ e $|e|_{H^1}=O(h)$. La coppia $16^2$--$32^2$ fornisce ordini osservati rispettivamente 1.94 e 0.97, compatibili con queste attese nel regime considerato. Il livello $64^2$ ha errori inferiori, ma il rapporto di contaminazione 24.05\% supera il limite fissato; il suo ordine non viene quindi usato come conferma conclusiva. È necessario completare il raffinamento temporale sul livello $64^2$ prima della sottomissione.
+Per $P_1$ e una soluzione sufficientemente regolare ci si attende asintoticamente $E_{L^2}=O(h^2)$ e $|e|_{H^1}=O(h)$. La coppia $16^2$--$32^2$ fornisce ordini osservati rispettivamente 1.94 e 0.97, compatibili con queste attese nel regime considerato. Il livello $64^2$ ha errori inferiori, ma il rapporto di contaminazione 24.05\% supera il criterio operativo del 10\%; il suo ordine non viene quindi usato come conferma conclusiva e il livello è escluso dall'evidenza di convergenza spaziale isolata. La verifica E1 supporta quindi un ordine spaziale indicativo sulla coppia $16^2$--$32^2$, non una dimostrazione su tre livelli.
 
 \begin{figure}[!htbp]
 \centering
@@ -116,7 +116,14 @@ $t$ & Mediana & 95-esimo percentile & Massimo\\
 
 \subsection{Confronto Galerkin e SUPG}
 
-La variante SUPG è stata confrontata con Galerkin a $32\times32$ e $\Delta t=0.0025$, sia su mesh fissa sia in ALE mobile. Nella prova a mesh fissa, l'errore assoluto $L^2$ medio nel tempo passa da $4.262\times10^{-3}$ (Galerkin) a $4.302\times10^{-3}$ (SUPG); in ALE mobile passa da $4.597\times10^{-3}$ a $4.653\times10^{-3}$. Nella configurazione esaminata non emerge un miglioramento di accuratezza attribuibile alla SUPG. La modalità SUPG aumenta il tempo misurato nel confronto fisso, mentre il confronto ALE mobile presenta una differenza temporale più contenuta; non viene quindi formulata una conclusione generale sul costo della stabilizzazione a ogni risoluzione.
+La variante SUPG è stata confrontata con Galerkin a $32\times32$ e $\Delta t=0.0025$, sia su mesh fissa sia in ALE mobile. Il moto usato nella colonna ``Moving ALE'' è una deformazione armonica prescritta, indipendente da GDM e dai controllori MMPDE. Posto $\psi(x,y)=\sin(\pi x)\sin(\pi y)$ e $a=0.02$, le coordinate sono
+\[
+\begin{aligned}
+x(t)&=x_0+a\psi(x_0,y_0)\sin(2\pi t/T),\\
+y(t)&=y_0+\frac{a}{2}\psi(x_0,y_0)[\cos(2\pi t/T)-1].
+\end{aligned}
+\]
+Il moto è periodico, parte e termina sulla mesh iniziale e lascia fissi i nodi di bordo perché $\psi=0$ su $\partial\Omega$. Il confronto è un test di risposta del percorso ALE a una deformazione prescritta; non costituisce una prova di convergenza su mesh mobili né una valutazione del movimento GDM. Nella prova a mesh fissa, l'errore assoluto $L^2$ medio nel tempo passa da $4.262\times10^{-3}$ (Galerkin) a $4.302\times10^{-3}$ (SUPG); in ALE mobile passa da $4.597\times10^{-3}$ a $4.653\times10^{-3}$. Nella configurazione esaminata non emerge un miglioramento di accuratezza attribuibile alla SUPG. La modalità SUPG aumenta il tempo misurato nel confronto fisso, mentre il confronto ALE mobile presenta una differenza temporale più contenuta; non viene quindi formulata una conclusione generale sul costo della stabilizzazione a ogni risoluzione.
 
 \begin{table*}[!t]
 \centering\small
@@ -152,7 +159,7 @@ Il percorso ALE statico riproduce il risultato fixed-grid entro la precisione nu
 
 \subsection{Verifica indipendente della D-GCL}
 
-Per una traiettoria nodale affine in ogni passo, la mappa elementare è affine nel tempo e in due dimensioni $\det F(t)$ è un polinomio al più quadratico; la sua derivata è quindi lineare. La regola del punto medio integra esattamente la derivata, in aritmetica reale, e produce l'identità geometrica discreta adottata nell'assemblaggio. Nel test strutturato $16\times16$, il residuo element-wise nativo massimo è $8.69\times10^{-17}$ e il residuo algebrico in norma infinito è $4.63\times10^{-16}$. Il test free-stream ha errore $L^\infty$ pari a $4.10\times10^{-13}$. Il residuo lineare misurato è $1.13\times10^{-12}$, circa il 4.97\% della tolleranza GMRES effettiva riportata dal core. I valori sono coerenti con la precisione floating-point e il solve lineare nella singola configurazione indipendente; non sostituiscono una verifica del bilancio integrale della PDE forzata.
+Per una traiettoria nodale affine in ogni passo, la mappa elementare è affine nel tempo e in due dimensioni $\det F(t)$ è un polinomio al più quadratico; la sua derivata è quindi lineare. Con elementi affini $P_1$, velocità nodale costante nel singolo intervallo, orientazione positiva per tutto il passo e quadratura esatta dei contributi geometrici (grado spaziale almeno due), la regola del punto medio integra esattamente la derivata temporale della matrice di massa. Il risultato è formulato come Lemma~\ref{lem:dgcl_midpoint} nell'Appendice~\ref{app:stageef}; si tratta di un'identità geometrica discreta sotto ipotesi precise, non di un teorema di stabilità o convergenza dello schema ALE. Nel test strutturato $16\times16$, il residuo element-wise nativo massimo è $8.69\times10^{-17}$ e il residuo algebrico in norma infinito è $4.63\times10^{-16}$. Il test free-stream ha errore $L^\infty$ pari a $4.10\times10^{-13}$. Il residuo lineare misurato è $1.13\times10^{-12}$, circa il 4.97\% della tolleranza GMRES effettiva riportata dal core. L'errore free-stream $4.10\times10^{-13}$ non coincide con il residuo geometrico (dell'ordine di $10^{-16}$): è misurato dopo l'assemblaggio e la soluzione del sistema discreto e include il contributo della soluzione lineare in precisione finita e dell'accumulo degli arrotondamenti. I valori riguardano la singola configurazione indipendente; non sostituiscono una verifica del bilancio integrale della PDE forzata.
 
 \begin{table}[tbp]
 \centering\small
@@ -205,6 +212,6 @@ $64^2$ & 4225 & $3.048\times10^{-3}$ & 0.735\\
 \label{fig:e1_work_precision}
 \end{figure*}
 
-\subsection{Sintesi e punti non ancora chiusi}
+\subsection{Portata della verifica numerica e ALE}
 
-E1 fornisce evidenza di ordine temporale prossimo a uno, di ordini spaziali compatibili con $P_1$ sulla coppia $16^2$--$32^2$, di equivalenza fixed/ALE statico e di consistenza D-GCL nella configurazione indipendente verificata. Restano aperti il raffinamento temporale sul livello $64^2$, una valutazione SUPG in più regimi e una più ampia verifica di convergenza/condizionamento. I risultati E1 non sono quindi usati per dichiarare una convergenza spaziale completa su tre livelli.
+E1 documenta un ordine temporale prossimo a uno su mesh fissa, ordini spaziali compatibili con $P_1$ sulla coppia $16^2$--$32^2$, equivalenza tra i percorsi fixed e ALE statico e consistenza D-GCL nel test indipendente specificato. Non documenta invece la convergenza del solutore su una famiglia di mesh mobili: la prova armonica ALE è una singola configurazione di deformazione e mostra un errore maggiore del caso fisso corrispondente. Inoltre, i risultati a $\Delta t=0.0025$ della prova SUPG e del work--precision non sono direttamente confrontabili con la campagna F1, che usa $\Delta t=0.005$. E1 non fornisce quindi una stima dell'errore temporale del benchmark F1 né dimostra che il suo guadagno sia puramente spaziale.

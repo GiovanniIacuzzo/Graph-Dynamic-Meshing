@@ -44,7 +44,12 @@ f(\bm x,t)=
 -\nu\Delta u^\star(\bm x,t).
 \label{eq:forcing}
 \end{equation}
-Si impongono $u_0=u^\star(\cdot,0)$ e $g_D=u^\star|_{\partial\Omega}$. Le derivate necessarie alla costruzione di $f$ sono analitiche; la soluzione esatta è utilizzata per costruire forzante e dati al contorno e, durante il benchmark, per calcolare gli errori. Come verificato dall'audit della pipeline, essa non viene passata alla GNN come feature di inferenza.
+Si impone $u_0=u^\star(\cdot,0)$. Poiché $\sin(\pi x)\sin(\pi y)=0$ su ciascun lato di $\partial\Omega$, il dato di Dirichlet indotto dalla soluzione manufatta è identicamente omogeneo:
+\begin{equation}
+g_D(\bm x,t)=u^\star(\bm x,t)|_{\partial\Omega}\equiv0.
+\label{eq:homogeneous_dirichlet}
+\end{equation}
+Non sono quindi presenti condizioni di Dirichlet non omogenee o dipendenti dal tempo. I nodi di bordo restano fissi e il valore imposto su tali nodi è zero per tutta la simulazione. Le derivate necessarie alla costruzione di $f$ sono analitiche; la soluzione esatta è utilizzata per costruire la forzante e, durante il benchmark, per calcolare gli errori. Come verificato nel percorso di inferenza, essa non viene passata alla GNN come feature.
 
 Nella campagna PDE Stage D i coefficienti comuni sono
 \begin{equation}
@@ -52,21 +57,36 @@ Nella campagna PDE Stage D i coefficienti comuni sono
 \nu=10^{-3},\qquad T=0.5.
 \label{eq:pde_coefficients}
 \end{equation}
-I parametri $\sigma$ e $\beta$ variano tra i casi, secondo gli intervalli riportati nella Sezione~\ref{sec:protocollo}.
+
+\subsection{Bilancio continuo della massa}
+Integrando \eqref{eq:pde} su $\Omega$ e applicando il teorema della divergenza si ottiene
+\begin{equation}
+\begin{aligned}
+\frac{d}{dt}M(t)+\int_{\partial\Omega}
+(\bm b\,u^\star-\nu\nabla u^\star)\cdot\bm n\,ds
+&=\int_\Omega f\,d\bm x,\\
+M(t)&=\int_\Omega u^\star(\bm x,t)\,d\bm x.
+\end{aligned}
+\label{eq:continuous_mass_balance}
+\end{equation}
+Per il dato omogeneo $u^\star|_{\partial\Omega}=0$, il flusso convettivo al bordo è nullo, ma il flusso diffusivo normale $-\nu\nabla u^\star\cdot\bm n$ non è in generale nullo. La massa non è dunque costante: varia in risposta alla forzante e al flusso diffusivo attraverso il bordo. Questa identità continua definisce il bilancio da usare per una futura verifica discreta; i valori di discrepanza degli incrementi riportati più avanti non costituiscono, da soli, il residuo discreto completo di \eqref{eq:continuous_mass_balance}.
+
+I parametri $\sigma$ e $\beta$ variano tra i casi, secondo gli intervalli riportati nella Sezione~\ref{sec:protocollo}. Il centro della gaussiana segue la traiettoria prescritta $\bm c(t)=(c_x(t),c_y(t))$ con velocità costante $\dot{\bm c}=(0.4/T,0.3/T)=(0.8,0.6)^T$. Essa non coincide con la velocità convettiva $\bm b=(0.4,0.2)^T$. Il profilo gaussiano non è pertanto una soluzione libera dell'equazione di advezione--diffusione trasportata dal campo $\bm b$: il suo moto è imposto dalla costruzione manufatta e compensato dalla forzante $f$. Il benchmark deve essere interpretato come test forzato e controllato di adattività verso una struttura mobile, non come modello di una particella passivamente trasportata dal flusso.
 
 \subsection{Mesh iniziale e spazio agli elementi finiti}
 
 Il dominio è discretizzato inizialmente mediante una triangolazione uniforme con $32\times32$ suddivisioni cartesiane e due triangoli per cella quadrangolare. La mesh iniziale contiene $N=1089$ nodi e $M=2048$ triangoli. La discretizzazione è conforme e di tipo Galerkin $P_1$; per il quadro generale della formulazione FEM si rimanda a testi standard \citep{quarteroni2009,donea2003finite}. Le funzioni di forma sono lineari e continue:
 \begin{equation}
 \begin{aligned}
-V_h(t)=\{v_h\in C^0(\overline{\Omega}):
+V_h^0(t)=\{v_h\in C^0(\overline{\Omega}):
 &\ v_h|_K\in\mathbb P_1(K),\\[-0.2em]
-&\ \forall K\in\mathcal T_h(t)\}.
+&\ v_h|_{\partial\Omega}=0,\quad
+\forall K\in\mathcal T_h(t)\}.
 \end{aligned}
 \end{equation}
 Nella $r$-adattività considerata, il numero di nodi, il numero di elementi e la connettività rimangono invariati; vengono aggiornate soltanto le coordinate dei nodi interni. I nodi del bordo restano vincolati alla geometria prescritta.
 
-La formulazione debole Euleriana di Galerkin, per funzioni test $v_h$ che rispettano i vincoli omogenei associati alle condizioni di Dirichlet, è
+La formulazione debole Euleriana di Galerkin usa lo spazio omogeneo $V_h^0(t)$ sia per le funzioni di prova sia per le funzioni test; essa è
 \begin{equation}
 (\partial_t u_h,v_h)_\Omega
 +(\bm b\cdot\nabla u_h,v_h)_\Omega

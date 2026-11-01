@@ -22,8 +22,4 @@ La discrepanza degli incrementi di massa è
 \[
 D_M^n=\abs{(M_h^n-M_h^{n-1})-(M_{\mathrm{ref}}^n-M_{\mathrm{ref}}^{n-1})},
 \]
-con versione relativa normalizzata tramite $\max(\abs{M_{\mathrm{ref}}^0},10^{-12})$. La media relativa è circa $1.62\times10^{-4}$ per Fixed FEM e $6.36\times10^{-3}$ per Stage D. La quantità non rappresenta il residuo completo dell'identità integrale della PDE; non include esplicitamente in un'unica identità tutti i contributi di forzante e flussi al contorno. Per tale ragione viene denominata discrepanza degli incrementi di massa.
-
-\subsection{Dettagli temporali Stage D}
-
-Le misure temporali sono raccolte per caso e strategia con un warm-up escluso e cinque ripetizioni. Il tempo mediano Stage D è 0.8477 s per episodio, contro 0.1042 s per Fixed FEM. I timer esclusivi riportano circa 0.465 s per inferenza GNN, 0.0017 s per filtro, 0.211 s per aggiornamento geometrico, 0.161 s per solve ALE--FEM e 0.0127 s di overhead. I tempi non vengono interpretati come una decomposizione universale di qualsiasi implementazione ALE.
+con versione relativa normalizzata tramite $\max(\abs{M_{\mathrm{ref}}^0},10^{-12})$. La media relativa è circa $1.62\times10^{-4}$ per Fixed FEM e $6.36\times10^{-3}$ per Stage D. La quantità non rappresenta il residuo completo dell'identità integrale della PDE; non include esplicitamente in un'unica identità tutti i contributi di forzante e flussi al contorno. Il dato di Dirichlet è $g_D\equiv0$; la massa varia per la forzante e per il flusso diffusivo normale. Per tale ragione la quantità viene denominata discrepanza degli incrementi di massa e non errore di conservazione.

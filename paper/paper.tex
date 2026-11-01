@@ -23,7 +23,7 @@
 \usepackage[nameinlink,noabbrev]{cleveref}
 
 \hypersetup{
-  pdftitle={Graph Dynamic Meshing: rilocazione neurale a topologia fissa per PDE transitorie},
+  pdftitle={Graph Dynamic Meshing: rilocazione neurale a topologia fissa per un benchmark transiente di convezione-diffusione},
   pdfauthor={Giovanni Giuseppe Iacuzzo},
   pdfsubject={Rilocazione neurale di mesh, FEM-ALE, verifica geometrica e r-adattività classica}
 }
@@ -49,6 +49,7 @@
 \renewcommand{\dblfloatpagefraction}{0.78}
 
 \newtheorem{definition}{Definizione}
+\newtheorem{lemma}{Lemma}
 \newtheorem{proposition}{Proposizione}
 \newtheorem{remark}{Osservazione}
 
@@ -65,22 +66,20 @@
 \newcommand{\ALE}{\textsc{ALE}}
 \newcommand{\DGC}{\textsc{D-GCL}}
 
-\title{\bfseries Graph Dynamic Meshing: rilocazione neurale a topologia fissa per PDE transitorie\\[0.35em]
+\title{\bfseries Graph Dynamic Meshing: rilocazione neurale a topologia fissa per un benchmark transiente di convezione--diffusione\\[0.35em]
 \large Verifica geometrica lungo il percorso, integrazione ALE e confronto con metodi classici di $r$-adattività}
 \author{Giovanni Giuseppe Iacuzzo\\
 \small Dipartimento di Ingegneria e Architettura, Università degli Studi di Enna ``Kore'', Enna, Italia\\
 \small \texttt{giovanni.iacuzzo@unikore.it}}
-\date{31 ottobre 2026}
+\date{\today}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-La $r$-adattività redistribuisce i gradi di libertà esistenti mediante lo spostamento dei nodi, mantenendo invariata la connettività della mesh. In problemi transitori, una strategia di rilocazione deve essere valutata congiuntamente rispetto all'errore della soluzione discreta, alla validità geometrica lungo il moto, alla formulazione ALE e al costo end-to-end. Questo lavoro presenta Graph Dynamic Meshing (GDM), una pipeline per la rilocazione bidimensionale a topologia fissa che combina una rete neurale su grafi, un filtro geometrico deterministico basato sull'analisi del Jacobiano lungo il segmento di spostamento e un solutore FEM--ALE nativo C++/deal.II. La valutazione è progressiva: le campagne A--D studiano target statici e temporali, trasferimento dello stato e accuratezza PDE; la campagna E1 verifica il solver, la convergenza temporale, la distribuzione locale del numero di Péclet e la D-GCL; la campagna F1 confronta GDM con tre controllori classici di $r$-refinement a parità di topologia, gradi di libertà, passo temporale e solver.
+Questo lavoro valuta Graph Dynamic Meshing (GDM), una pipeline di $r$-adattività a topologia fissa che combina una rete neurale su grafi, un filtro geometrico deterministico lungo il percorso nodale e un solutore agli elementi finiti in formulazione Arbitrary Lagrangian--Eulerian (ALE). Il caso di studio è una specifica equazione bidimensionale transiente di convezione--diffusione, verificata mediante una soluzione manufatta gaussiana forzata. La valutazione comprende la caratterizzazione numerica del solver e un confronto held-out, a parità di gradi di libertà, passo temporale e formulazione FEM, con una mesh fissa e tre controllori classici di $r$-refinement.
 
-Nel benchmark F1, su 28 casi held-out (12 interpolativi e 16 estrapolativi), l'errore relativo $L^2$ integrato medio è 9.831\% per GDM, contro 10.633\% per mesh fissa, 10.358\% per Winslow, 10.535\% per arc-length e 10.578\% per Hessian-based. La riduzione relativa media appaiata di GDM è compresa tra 6.10\% e 8.04\% rispetto alle quattro strategie di riferimento; il segno del miglioramento è coerente in tutti i 28 casi per l'endpoint primario. Questi dati sono tuttavia da considerare preliminari rispetto alla chiusura dell'audit: 26 conteggi di celle appena sotto la soglia assoluta del Jacobiano sono dovuti a scarti di arrotondamento dell'ordine di $10^{-18}$, e alcune ottimizzazioni MMPDE raggiungono il limite prefissato di iterazioni. La diagnostica del tracking, condotta separatamente su quattro casi di validation, mostra un arricchimento mediano della densità di elementi del 21.3\% nella corona attorno al centro gaussiano mobile; il filtro interviene in 32 dei 40 eventi analizzati e conserva, in rapporto aggregato, il 48.1\% della norma degli spostamenti proposti.
-
-Il lavoro non rivendica una superiorità generale delle reti neurali per il movimento di mesh, né un vantaggio di costo rispetto alla mesh fissa. I risultati supportano un miglioramento di accuratezza nel problema manufatto e nel protocollo esaminati, a fronte di un costo online maggiore e di un compromesso geometrico che richiede ulteriore caratterizzazione.
+Nel confronto principale, su 28 casi della stessa famiglia manufatta, l'errore relativo $L^2$ integrato medio è 9.831\% per GDM, 10.633\% per la mesh fissa e 10.358--10.578\% per i controllori classici; la riduzione relativa appaiata di GDM è compresa tra 6.10\% e 8.04\%. Il confronto è condotto a passo temporale fissato ($\Delta t=0.005$) e non isola pertanto il solo errore spaziale. Il miglioramento è accompagnato da una qualità geometrica minima inferiore, da interventi frequenti del filtro e da un costo online mediano pari a circa 12.6 volte quello della mesh fissa. Le baseline classiche e il filtro presentano inoltre limiti di convergenza iterativa e di robustezza numerica, discussi quantitativamente nel testo. I risultati documentano quindi un vantaggio di accuratezza circoscritto al protocollo considerato, non una superiorità generale né una generalizzazione a mesh, geometrie o PDE differenti.
 \end{abstract}
 
 \noindent\textbf{Parole chiave:} $r$-adattività; rilocazione di mesh; reti neurali su grafi; elementi finiti; ALE; D-GCL; convezione--diffusione; mesh movement.
@@ -100,16 +99,16 @@ Il lavoro non rivendica una superiorità generale delle reti neurali per il movi
 \section{Disegno sperimentale e protocollo}\label{sec:protocollo}
 \input{sections/05_protocollo.tex}
 
-\section{Campagne preliminari A--C: target, trasferimenti e GNN statica}\label{sec:stageabc}
+\section{Esperimenti di sviluppo: rilocazione statica e trasferimento}\label{sec:stageabc}
 \input{sections/06_stage_abc.tex}
 
-\section{Benchmark PDE trajectory-aware: Stage D}\label{sec:staged}
+\section{Valutazione trajectory-aware sul problema manufatto}\label{sec:staged}
 \input{sections/07_stage_d.tex}
 
-\section{Verifica del solutore e caratterizzazione numerica: Stage E1}\label{sec:stagee}
+\section{Verifica del solutore e caratterizzazione numerica}\label{sec:stagee}
 \input{sections/10_stage_e1.tex}
 
-\section{Confronto con \texorpdfstring{$r$-refinement}{r-refinement} classico: Stage F1}\label{sec:stagef}
+\section{Confronto con metodi classici di \texorpdfstring{$r$-refinement}{r-refinement}}\label{sec:stagef}
 \input{sections/11_stage_f1.tex}
 
 \section{Discussione e limiti}\label{sec:discussione}

@@ -121,43 +121,10 @@ L'audit ha verificato in una finestra diagnostica che le coordinate filtrate son
 \end{figure}
 
 \subsection{Costo computazionale}
-
-Il tempo wall-clock mediano per episodio è circa 0.1042 s per Fixed FEM, 0.8455 s per Stage A e 0.8477 s per Stage D, aggregando i casi held-out. Il rapporto tra le mediane aggregate per Stage D e Fixed FEM è circa 8.14; la mediana dei rapporti appaiati calcolati caso per caso è circa 8.11. Nel seguito il costo viene quindi descritto, senza attribuire significato alla differenza tra i due aggregatori, come circa 8.1 volte quello della mesh fissa. La decomposizione media del tempo Stage D è circa 0.465 s per inferenza GNN, 0.0017 s per filtro, 0.211 s per aggiornamento geometrico, 0.161 s per solve nativo ALE--FEM e 0.0127 s di overhead residuo. Non viene eseguito remapping esplicito.
-
-Il principale contributo al costo incrementale è costituito dall'inferenza e dall'aggiornamento geometrico, non dal filtro di sicurezza. I risultati non supportano pertanto alcuna affermazione di accelerazione rispetto alla mesh fissa. Il vantaggio osservato è un miglioramento di accuratezza a fronte di un costo computazionale superiore.
-
-\begin{table*}[!t]
-\centering
-\small
-\caption{Tempi wall-clock per episodio. Mediane sui casi held-out e intervalli interquartili ottenuti dalle misure temporali ripetute; un warm-up è escluso e sono utilizzate cinque ripetizioni per caso.}
-\label{tab:runtime_stage_d}
-\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr}
-\toprule
-Strategia & Mediana [s] & $Q_{25}$ [s] & $Q_{75}$ [s] & Rapporto vs Fixed\\
-\midrule
-Fixed FEM & 0.1042 & 0.1021 & 0.1066 & $1.00\times$\\
-Stage A GNN + filtro + ALE & 0.8455 & 0.8370 & 0.8515 & $8.11\times$\\
-Stage D GNN + filtro + ALE & 0.8477 & 0.8430 & 0.8527 & $8.14\times$\\
-\bottomrule
-\end{tabular*}
-\end{table*}
-
-\begin{figure*}[!t]
-\centering
-\IfFileExists{images/stage_d/fig3_computational_cost_comparison.pdf}{%
-  \includegraphics[width=0.96\textwidth,height=0.36\textheight,keepaspectratio]{images/stage_d/fig3_computational_cost_comparison.pdf}%
-}{%
-  \fbox{\begin{minipage}[c][0.105\textheight][c]{0.88\textwidth}
-  \centering\footnotesize\textbf{Figura non inclusa nel pacchetto sorgente}\par\vspace{0.35em}
-  \scriptsize\nolinkurl{images/stage_d/fig3_computational_cost_comparison.pdf}
-  \end{minipage}}%
-}
-\caption{Confronto dei tempi wall-clock e delle componenti computazionali per Fixed FEM, Stage A e Stage D.}
-\label{fig:staged_runtime}
-\end{figure*}
+I tempi della prima campagna trajectory-aware non vengono utilizzati per il confronto prestazionale tra metodi nel manoscritto, poiché il protocollo di misura non è direttamente riconciliabile con quello ripetuto e consolidato adottato nella campagna F1. Per evitare di confrontare stime ottenute con protocolli diversi, il confronto quantitativo dei tempi online è riportato una sola volta, nella Sezione~\ref{sec:stagef}, sulla base delle misure F1 (warm-up escluso, cinque ripetizioni per caso).
 
 \subsection{Consistenza geometrica e discrepanza degli incrementi di massa}
 
 I residui D-GCL massimi riportati sono $1.97\times10^{-16}$ in norma infinito per il residuo algebrico e $4.70\times10^{-17}$ per il residuo element-wise. Questi valori documentano la verifica numerica della compatibilità geometrica nella configurazione testata.
 
-La discrepanza degli incrementi di massa \eqref{eq:mass_increment_discrepancy} è distinta dalla D-GCL e dal residuo completo del bilancio PDE. La sua media relativa normalizzata è circa $1.62\times10^{-4}$ per Fixed FEM e $6.36\times10^{-3}$ per Stage D. Poiché la PDE è forzata e impone condizioni di Dirichlet dipendenti dal tempo, la massa totale non è in generale costante. Questa quantità misura lo scarto degli incrementi rispetto alla soluzione manufatta e non deve essere interpretata come violazione della conservazione fisica. La verifica di un residuo di bilancio completo, con contributi di forcing e flussi al contorno, rimane distinta e non è rivendicata sulla base di questa metrica.
+La discrepanza degli incrementi di massa \eqref{eq:mass_increment_discrepancy} è distinta dalla D-GCL e dal residuo completo del bilancio PDE. La sua media relativa normalizzata è circa $1.62\times10^{-4}$ per Fixed FEM e $6.36\times10^{-3}$ per Stage D. Il dato di Dirichlet è invece omogeneo e stazionario: $g_D\equiv0$. La massa totale non è per questo costante, poiché la PDE è forzata e il flusso diffusivo normale al bordo può essere non nullo, come chiarito in \eqref{eq:continuous_mass_balance}. Questa quantità misura lo scarto degli incrementi rispetto alla soluzione manufatta e non deve essere interpretata come residuo del bilancio fisico. La verifica di un residuo discreto completo, che includa forzante, flusso diffusivo e reazioni dei gradi di libertà di Dirichlet, non è rivendicata sulla base di questa metrica.

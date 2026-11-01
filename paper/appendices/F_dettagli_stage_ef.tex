@@ -9,14 +9,43 @@ h_K^\beta=\frac{2\norm{\boldsymbol\beta}}{\sum_{i=1}^{3}|\boldsymbol\beta\cdot\n
 \]
 La quantità ha dimensione di lunghezza; il numero $Pe_K=\norm{\boldsymbol\beta}h_K^\beta/(2\nu)$ è adimensionale. Quando $\norm{\boldsymbol\beta}$ è numericamente nulla si pone $Pe_K=0$ e la lunghezza direzionale non viene utilizzata. Per ALE, $\bm w$ è stimata dalla velocità nodale impiegata nel solver durante il passo, non da un valore globale medio.
 
-\subsection{Identità geometrica discreta}
+\subsection{Lemma di esattezza del punto medio per la D-GCL}
 
-Sia $F_K(s)=F_K^n+s(F_K^{n+1}-F_K^n)$ la mappa affine dei lati di un elemento durante il passo. In due dimensioni $J_K(s)=\det F_K(s)$ è un polinomio di grado al più due; pertanto $dJ_K/ds$ è lineare. La regola del punto medio integra esattamente una funzione lineare, da cui l'identità geometrica del passo nella forma discreta utilizzata dal solver. L'identità matriciale verificata è
+Sia $\widehat K$ un triangolo di riferimento e sia $F_K(t)=F_K^n+(t-t_n)G_K$ la matrice jacobiana della mappa affine verso l'elemento fisico durante un singolo passo $[t_n,t_{n+1}]$, con $\Delta t=t_{n+1}-t_n$. Si assumono: (i) elementi affini triangolari e base conforme $P_1$; (ii) coordinate nodali lineari nel tempo sul singolo passo, con velocità nodale costante nell'intervallo; (iii) orientazione positiva, $J_K(t)=\det F_K(t)>0$ per ogni $t$ nel passo; (iv) assemblaggio coerente dei termini geometrici alla configurazione intermedia e quadratura spaziale esatta per gli integrandi geometrici (grado polinomiale almeno due).
+
+\begin{lemma}[Identità geometrica al punto medio]
+Sotto le ipotesi precedenti, in aritmetica reale la matrice di massa elementare $M_K(t)$ soddisfa
 \[
-\left[\frac{M^{n+1}-M^n}{\Delta t}+C_{\mathrm{mesh}}^{n+1/2}\right]\bm 1=\bm 0,
-\qquad C_{\mathrm{mesh}}=-C_{\mathrm{adv}}^w-M_{\mathrm{div}w}.
+\frac{M_K(t_{n+1})-M_K(t_n)}{\Delta t}
+=\dot M_K(t_{n+1/2}),
 \]
-La verifica E1 separa residuo element-wise indipendente, residuo nativo, residuo algebrico, errore free-stream e residuo lineare. Il residuo free-stream include il contributo del solve e del round-off; non è identico al residuo geometrico algebrico.
+e l'operatore cinematico di mesh assemblato con la regola del punto medio soddisfa, dopo assemblaggio sugli elementi,
+\[
+\left[\frac{M^{n+1}-M^n}{\Delta t}
++C_{\mathrm{mesh}}^{n+1/2}\right]\bm 1=\bm 0.
+\]
+La relazione è un'identità geometrica discreta; non implica da sola stabilità, convergenza della soluzione PDE o conservazione della massa fisica per una PDE forzata.
+\label{lem:dgcl_midpoint}
+\end{lemma}
+
+\begin{proof}
+Per un elemento affine in due dimensioni, $F_K(t)$ dipende linearmente dal tempo. Il determinante di una matrice $2\times2$ i cui elementi sono affini in $t$ è un polinomio di grado al più due; pertanto $J_K(t)=\det F_K(t)$ è quadratico e $\dot J_K(t)$ è affine nel tempo. Le funzioni di forma $P_1$ sono fisse nella coordinata di riferimento e la matrice di massa elementare può essere scritta come
+\[
+(M_K(t))_{ij}=\int_{\widehat K}
+\widehat\varphi_i\widehat\varphi_j J_K(t)\,d\widehat x.
+\]
+Ne segue che ogni componente di $\dot M_K(t)$ è affine nel tempo. Per ogni funzione affine $q(t)$ vale l'identità esatta
+\[
+\frac{1}{\Delta t}\int_{t_n}^{t_{n+1}}q(t)\,dt
+=q(t_{n+1/2}),
+\]
+che, applicata a $q=\dot M_K$, dà la prima relazione.
+
+Per la seconda relazione si usa la partizione dell'unità $\sum_j\varphi_j=1$, da cui $\sum_j\nabla\varphi_j=\bm0$. Il termine advettivo di mesh moltiplicato per il vettore unitario si annulla; il termine di divergenza produce l'integrale di $\varphi_i\nabla\cdot\bm w$. D'altra parte, la formula di derivazione del determinante dà $\dot J_K=J_K\operatorname{tr}(F_K^{-1}G_K)=J_K\nabla\cdot\bm w$ nella configurazione di riferimento. La derivata della somma di riga della matrice di massa coincide quindi con il contributo di divergenza della velocità di mesh. La valutazione a metà passo è esatta per l'affinità temporale di $\dot J_K$ appena dimostrata; la quadratura spaziale assunta rende esatti gli integrali elementari. Con il segno $C_{\mathrm{mesh}}=-C_{\mathrm{adv}}^w-M_{\mathrm{div}w}$ si ottiene l'identità locale e, sommando sugli elementi, quella assemblata.
+\end{proof}
+
+\paragraph{Portata del lemma.}
+L'esattezza riguarda il contributo geometrico associato al moto nodale lineare e alla discretizzazione $P_1$ nelle ipotesi indicate. Non è una stima a priori dell'errore della PDE, non tratta la convergenza in $h$ o $\Delta t$, e non implica che il residuo floating-point sia nullo. Il test numerico E1 riporta separatamente residuo element-wise, residuo algebrico, errore free-stream e residuo del solve lineare.
 
 \subsection{Funzionali e monitor MMPDE usati in F1}
 
@@ -37,16 +66,48 @@ con nodi di bordo bloccati e line-search di Armijo. Il monitor viene congelato n
 
 I monitor sono $G_H=I+\alpha|H_h|$, $G_A=I+\alpha\nabla u_h\nabla u_h^T$ e $G_W=\sqrt{\det(G_A)}I$. Il campo Hessiano $H_h$ è recuperato dai gradienti nodali numerici mediante fit least-squares locale; non coincide con l'Hessiano elementare di una funzione affine $P_1$.
 
+\subsection{Griglia di selezione dei parametri MMPDE su validation}
+
+La Tabella~\ref{tab:f1_alpha_validation} riporta tutti i candidati testati. L'errore è la media dell'errore relativo $L^2$ integrato sui 12 casi validation, espresso in percentuale. La colonna ``cap'' riporta il numero di eventi (su 120 per candidato) che hanno raggiunto il limite di 200 iterazioni. I valori selezionati per F1 sono quelli con errore medio più basso all'interno di ciascuna griglia discreta.
+
+\begin{table*}[!t]
+\centering\small
+\caption{Griglia di intensità dei monitor classici valutata sui 12 casi validation. Nessun valore è ottimo continuo: la selezione è limitata ai quattro candidati elencati per ciascun monitor.}
+\label{tab:f1_alpha_validation}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}llrrr}
+\toprule
+Monitor & $\alpha$ & Errore medio $L^2$ [\%] & Eventi al cap /120 & Esito\\
+\midrule
+Winslow & 0.0100 & 8.1201 & 0 & \\
+Winslow & 0.0250 & 8.0854 & 1 & \\
+Winslow & 0.0500 & 8.0509 & 0 & \\
+Winslow & 0.1000 & 8.0098 & 5 & Selezionato \\
+\midrule
+Arc-length & 0.0100 & 8.0939 & 0 & \\
+Arc-length & 0.0250 & 8.0566 & 0 & Selezionato \\
+Arc-length & 0.0500 & 8.0934 & 0 & \\
+Arc-length & 0.1000 & 8.4114 & 4 & \\
+\midrule
+Hessian & 0.0001 & 8.1491 & 0 & \\
+Hessian & 0.0005 & 8.1476 & 0 & \\
+Hessian & 0.0010 & 8.1434 & 0 & \\
+Hessian & 0.0050 & 8.1290 & 1 & Selezionato \\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+I tre valori selezionati sono quindi minimi empirici sulla griglia finita. Non sono disponibili curve di sensibilità più fitte o una verifica di stabilità della scelta aumentando il budget iterativo; i test held-out non sono stati utilizzati per scegliere $\alpha$.
+
 \subsection{Statistiche appaiate F1}
 
-L'endpoint primario è l'errore relativo $L^2$ integrato nel tempo. Per ogni baseline e coorte viene calcolata la riduzione relativa appaiata caso per caso; il bootstrap ricampiona i casi, non i tempi né le ripetizioni temporali. La famiglia Holm contiene 12 confronti: quattro baseline e tre coorti (insieme dei 28 casi, test interpolativo e test estrapolativo). I p-value sono a due code. La procedura non compensa la mancata convergenza di alcuni eventi MMPDE; l'analisi di sensibilità al budget iterativo resta necessaria.
+L'endpoint primario è l'errore relativo $L^2$ integrato nel tempo. Per ogni baseline e coorte viene calcolata la riduzione relativa appaiata caso per caso; il bootstrap ricampiona i casi, non i tempi né le ripetizioni temporali. La famiglia Holm contiene 12 confronti: quattro baseline e tre coorti (insieme dei 28 casi, test interpolativo e test estrapolativo). I $p$-value sono a due code. Nei confronti complessivi tutti i 28 casi hanno differenza concorde a favore di GDM; il valore grezzo $2/2^{28}=7.45\times10^{-9}$ è il minimo esatto per tale configurazione di segni. Il valore corretto $8.94\times10^{-8}$ è il corrispondente risultato della correzione Holm sulla famiglia di 12 test. Gli intervalli bootstrap non misurano la variabilità tra seed del modello: è stato valutato un singolo checkpoint.
 
 \subsection{Tracking e filtro: definizioni della diagnostica validation}
 
 La corona di tracking è $\mathcal A(t)=\{\bm x:0.5\sigma\le\norm{\bm x-\bm c(t)}\le2\sigma\}$, valutata attraverso i centroidi degli elementi. L'arricchimento di densità è il rapporto tra la frazione di elementi i cui centroidi appartengono alla corona e la frazione geometrica di area occupata dalla corona. Il rapporto lineare di raffinamento è $h_{\mathrm{globale}}/h_{\mathrm{corona}}$. Questi indicatori descrivono una concentrazione relativa e non una norma di errore PDE.
 
-Il fattore $\alpha$ è globale per evento e $\Delta X_{\mathrm{safe}}=\alpha\Delta X_{\mathrm{raw}}$. Nella diagnostica validation sono stati analizzati quattro casi (40 eventi, 404 snapshot): 32 eventi hanno un intervento, la mediana di $\alpha$ è 0.423, il rapporto aggregato $\sum\norm{\Delta X_{\mathrm{safe}}}/\sum\norm{\Delta X_{\mathrm{raw}}}$ è 0.481 e 16 proposte raw contengono elementi invertiti. Dopo il filtro non sono registrate inversioni o degenerazioni. Il minimo Jacobiano safe è $9.999999999999975\times10^{-5}$, con slack di circa $-2.57\times10^{-19}$ rispetto a $10^{-4}$: è un segnale di arrotondamento da trattare esplicitamente, non da occultare mediante una modifica della soglia.
+Il fattore $\alpha$ è globale per evento e $\Delta X_{\mathrm{safe}}=\alpha\Delta X_{\mathrm{raw}}$. Nella diagnostica validation sono stati analizzati quattro casi (40 eventi, 404 snapshot): 32 eventi hanno un intervento, la mediana di $\alpha$ è 0.423, il rapporto aggregato $\sum\norm{\Delta X_{\mathrm{safe}}}/\sum\norm{\Delta X_{\mathrm{raw}}}$ è 0.481 e 16 proposte raw contengono elementi invertiti. Dopo il filtro non sono registrate inversioni o degenerazioni. Il minimo Jacobiano safe è $9.999999999999975\times10^{-5}$, con slack di circa $-2.57\times10^{-19}$ rispetto a $10^{-4}$. Questo dato evidenzia la necessità di distinguere l'ammissibilità in aritmetica esatta dal test numerico floating-point e non viene nascosto tramite una modifica retroattiva della soglia.
 
-\subsection{Stato di finalizzazione della campagna F1}
+\subsection{Tempi e stato dei dati F1}
 
-L'archivio della campagna contiene 140 righe di accuratezza (28 casi per cinque strategie), 840 ripetizioni temporali e 840 eventi per i tre controller classici (280 eventi ciascuno). Il file di stato riporta tuttavia `running` perché il controllo finale ha interrotto la finalizzazione in presenza di 26 conteggi di celle con $J<10^{-4}$ a scarti di round-off. Poiché non risultano celle invertite o degeneri, i risultati quantitativi sono riportati come esiti registrati della campagna, ma la F1 non è dichiarata formalmente chiusa fino al completamento di un controllo post-hoc coerente con la tolleranza del core.
+La campagna F1 contiene 140 righe di accuratezza (28 casi per cinque strategie), 840 ripetizioni temporali e 840 eventi per i tre controller classici (280 eventi ciascuno). In 26 dei 840 eventi MMPDE è stato raggiunto il limite di 200 iterazioni: 19 per Winslow, 2 per arc-length e 5 per Hessian-based. Non sono state registrate line-search fallite e l'energia è risultata monotona negli eventi. Questi dati descrivono l'esito al budget massimo adottato e non certificano la convergenza di ogni solve.

@@ -12,9 +12,18 @@ G_{\mathrm{H}}&=I+\alpha |H_h|,
 \end{align}
 dove $H_h$ è ricostruito ai nodi mediante least-squares pesato sui patch a due anelli a partire dai gradienti nodali numerici; non viene usato l'Hessiano elementare della funzione $P_1$, che è nullo all'interno di ciascun elemento. I monitor vengono simmetrizzati, proiettati su matrici definite positive, smussati e limitati secondo i parametri predefiniti. L'evoluzione pseudo-temporale usa un gradiente discreto del funzionale, precondizionamento con massa di riferimento lumped, nodi di bordo bloccati, line-search di Armijo e controlli sui determinanti.
 
-I parametri di intensità sono stati selezionati esclusivamente sulla validation: $\alpha_W=0.1$, $\alpha_{\mathrm{arc}}=0.025$ e $\alpha_H=0.005$. Il limite predefinito è di 200 iterazioni pseudo-temporali per evento. In 19/280 eventi Winslow, 2/280 eventi arc-length e 5/280 eventi Hessian-based è stato raggiunto il limite massimo; non sono state registrate line-search fallite e l'energia è risultata monotona negli eventi. Il raggiungimento del limite non viene interpretato come convergenza del problema MMPDE: questo aspetto limita la forza della comparazione e richiede un audit di sensibilità al budget iterativo prima della sottomissione.
+I parametri di intensità sono stati selezionati esclusivamente sulla validation, mediante una griglia discreta di quattro valori per monitor, riportata nell'Appendice~\ref{app:stageef}. I valori scelti sono i migliori tra quelli effettivamente provati, non ottimi continui. Il limite predefinito è di 200 iterazioni pseudo-temporali per evento. In 19/280 eventi Winslow, 2/280 eventi arc-length e 5/280 eventi Hessian-based è stato raggiunto il limite massimo; non sono state registrate line-search fallite e l'energia è risultata monotona negli eventi. Il raggiungimento del limite non viene interpretato come convergenza del problema MMPDE: i risultati rappresentano il comportamento dei controller al budget fissato e possono dipendere da tale budget.
 
 Queste baseline sono descritte come implementazioni MMPDE-type a gradiente discreto mass-lumped, non come discretizzazioni identiche a ogni formulazione MMPDE della letteratura. Il controller classico è implementato in NumPy/Python; il solver PDE è il medesimo core nativo C++/deal.II usato da GDM.
+
+La selezione dei parametri non è stata effettuata sul test held-out. La Tabella~\ref{tab:f1_alpha_validation} e la Figura~\ref{fig:f1_alpha_validation} documentano l'intera griglia di intensità esplorata sulla validation ($n=12$ casi). La scelta corrisponde al minimo dell'errore medio tra i quattro valori provati per ogni monitor; non consente di stimare la forma continua della curva né esclude che un valore intermedio o esterno alla griglia sia migliore.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.90\textwidth,height=0.29\textheight,keepaspectratio]{images/stage_f/diagnostics/monitor_strength_validation.pdf}
+\caption{Errore $L^2$ integrato medio sui 12 casi validation in funzione dell'intensità del monitor. Le linee verticali e i marcatori quadrati indicano i valori selezionati tra i quattro candidati testati.}
+\label{fig:f1_alpha_validation}
+\end{figure*}
 
 \subsection{Errore \texorpdfstring{$L^2$}{L2} integrato: risultati held-out}
 
@@ -37,7 +46,7 @@ Hessian-based & 8.699 & 11.987 & 10.578\\
 \end{tabular*}
 \end{table*}
 
-La riduzione relativa appaiata è calcolata caso per caso come $R_b(c)$ nella Sezione~\ref{sec:protocollo}. La Tabella~\ref{tab:f1_paired} riporta media, intervallo bootstrap percentile al 95\%, numero di casi favorevoli e $p$-value Wilcoxon appaiato, corretto con Holm per la famiglia di 12 confronti (quattro baseline per tre coorti). Il bootstrap usa 20\,000 ricampionamenti appaiati dei casi con seed 1701.
+La riduzione relativa appaiata è calcolata caso per caso come $R_b(c)$ nella Sezione~\ref{sec:protocollo}. La Tabella~\ref{tab:f1_paired} riporta media, intervallo bootstrap percentile al 95\%, numero di casi favorevoli e $p$-value Wilcoxon appaiato, corretto con Holm per la famiglia di 12 confronti (quattro baseline per tre coorti). Il bootstrap usa 20\,000 ricampionamenti appaiati dei casi con seed 1701. Il valore grezzo per ciascuno dei quattro confronti totali è il minimo esatto ottenibile quando tutti i 28 segni sono concordi, $p=2/2^{28}=7.45\times10^{-9}$; la correzione Holm su 12 test porta a $8.94\times10^{-8}$. Il valore non è quindi una misura della grandezza del guadagno, ma della coerenza del segno nel campione di casi considerato. Gli intervalli bootstrap ricampionano i 28 casi e non includono la variabilità tra seed di addestramento: è stato valutato un solo checkpoint GDM.
 
 \begin{table*}[!t]
 \centering\small
@@ -57,11 +66,38 @@ Hessian-based & 7.805 & [7.197, 8.433] & 28/28 & $8.94\times10^{-8}$\\
 
 Nei due split separati, le riduzioni rispetto alla mesh fissa sono 7.99\% (12/12 casi) in interpolazione e 8.07\% (16/16) in estrapolazione; rispetto alle tre baseline classiche le riduzioni medie sono comprese tra 6.36\% e 7.70\% nel test interpolativo e tra 5.90\% e 7.89\% in quello estrapolativo. L'esito è coerente con il protocollo parametrico scelto, ma l'extrapolation split riguarda principalmente $\sigma$ fuori dall'intervallo di training e non rappresenta generalizzazione a una diversa PDE o topologia.
 
+Per descrivere come la riduzione appaiata dipenda dalla larghezza della struttura, i 28 casi sono stati ordinati per $\sigma$ e suddivisi in quattro gruppi consecutivi di sette casi. La Tabella~\ref{tab:f1_sigma_groups} riporta le riduzioni medie all'interno di ciascun gruppo; la Figura~\ref{fig:f1_sigma_response} mostra i valori per caso. La riduzione rispetto alla mesh fissa cresce descrittivamente dal gruppo a $\sigma$ minore a quello a $\sigma$ maggiore. La stessa tendenza non è identica per tutte le baseline e non viene interpretata come legge causale: i gruppi sono ricavati da un singolo test parametrico e $\beta$ varia contemporaneamente.
+
+\begin{table*}[!t]
+\centering\small
+\caption{Riduzione relativa media dell'errore integrato di GDM nei quartili di $\sigma$ del test F1. Ogni gruppo contiene sette casi ordinati per $\sigma$; i valori sono medie descrittive delle riduzioni appaiate per caso.}
+\label{tab:f1_sigma_groups}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}llrrrr}
+\toprule
+Gruppo & Intervallo $\sigma$ & Fixed FEM [\%] & Winslow [\%] & Arc-length [\%] & Hessian [\%] \\
+\midrule
+Q1 & [0.02236, 0.03037] & 6.80 & 3.41 & 6.15 & 5.97 \\
+Q2 & [0.03115, 0.05436] & 7.28 & 5.34 & 6.73 & 6.75 \\
+Q3 & [0.05764, 0.08794] & 8.73 & 7.31 & 7.35 & 8.68 \\
+Q4 & [0.08887, 0.10339] & 9.34 & 8.33 & 7.69 & 9.82 \\
+\bottomrule
+\end{tabular*}
+\vspace{0.15em}
+\parbox{0.98\textwidth}{\footnotesize La tabella è una descrizione post hoc dei 28 casi test già eseguiti, non una nuova analisi inferenziale.}
+\end{table*}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.90\textwidth,height=0.30\textheight,keepaspectratio]{images/stage_f/diagnostics/error_reduction_vs_sigma.pdf}
+\caption{Riduzione relativa appaiata dell'errore $L^2$ integrato di GDM rispetto a ciascuna baseline, riportata caso per caso in funzione di $\sigma$. Non sono mostrati fit o intervalli inferenziali; la figura è descrittiva.}
+\label{fig:f1_sigma_response}
+\end{figure*}
+
 Le metriche secondarie non mostrano un vantaggio uniforme in ogni norma: l'errore finale relativo $L^2$ e l'errore integrato in seminorma $H^1$ favoriscono mediamente GDM, mentre l'errore finale in seminorma $H^1$ non è migliore di Winslow in media. La rivendicazione primaria viene pertanto mantenuta sull'errore relativo $L^2$ integrato.
 
 \subsection{Qualità geometrica e filtro}
 
-La riduzione dell'errore è accompagnata da una qualità geometrica inferiore per GDM rispetto alle mesh classiche. La media sui casi del minimo di qualità di Escobar per traiettoria è 0.398 per GDM, contro 0.779--0.835 per i tre controllori classici; l'aspect ratio massimo registrato per GDM raggiunge 4.02, contro valori massimi compresi tra 1.50 e 1.78 per le baseline. Il minimo Jacobiano GDM si avvicina alla soglia configurata $10^{-4}$, mentre i minimi delle baseline classiche restano tra $7.81\times10^{-4}$ e $8.47\times10^{-4}$.
+La riduzione dell'errore è accompagnata da una qualità geometrica inferiore per GDM rispetto alle mesh classiche. La media sui casi del minimo di qualità di Escobar per traiettoria è 0.398 per GDM, contro 0.779--0.835 per i tre controllori classici; l'aspect ratio massimo registrato per GDM raggiunge 4.02, contro valori massimi compresi tra 1.50 e 1.78 per le baseline. Il minimo Jacobiano GDM si avvicina alla soglia configurata $10^{-4}$, mentre i minimi delle baseline classiche restano tra $7.81\times10^{-4}$ e $8.47\times10^{-4}$. Il confronto è a parità di gradi di libertà e topologia, ma non a parità di distorsione geometrica ammessa: GDM utilizza una parte più ampia del budget di deformazione consentito dal proprio filtro, mentre le baseline classiche rimangono su mesh geometricamente meno distorte. I risultati non separano pertanto l'effetto della strategia di movimento da quello del diverso livello di qualità geometrica raggiunto.
 
 \begin{table*}[!t]
 \centering\small
@@ -80,7 +116,7 @@ GDM & $1.00\times10^{-4}$ & 0.398 & 0.324 & 4.016\\
 \end{tabular*}
 \end{table*}
 
-Non sono state registrate celle invertite o degeneri dopo il filtro. Tuttavia, il controllo finale della campagna ha contato 26 celle con determinante strettamente inferiore a $10^{-4}$ di scarti dell'ordine di $10^{-18}$, e il programma ha interrotto la finalizzazione perché il gate Python applicava una disuguaglianza stretta senza la tolleranza di arrotondamento del filtro nativo. Le 140 righe per-caso (28 casi per cinque strategie) e le 840 ripetizioni temporali sono presenti, ma il file di stato della campagna mantiene il valore `running`: la campagna non viene quindi dichiarata formalmente finalizzata. La discrepanza non indica inversione geometrica, ma deve essere chiusa con una regola numerica coerente e documentata prima della sottomissione.
+Non sono state registrate celle invertite o degeneri dopo il filtro. Il controllo post-hoc ha tuttavia rilevato 26 valutazioni del Jacobiano leggermente inferiori alla soglia $10^{-4}$, con scarti dell'ordine di $10^{-18}$. Si tratta di una discrepanza di arrotondamento rispetto alla disuguaglianza stretta e non di un'inversione osservata; non è però corretto dichiarare che il vincolo sia soddisfatto strettamente in ogni valutazione floating-point. Nel presente studio il filtro è quindi documentato come pathwise admissibility in aritmetica esatta e come verifica numerica entro la precisione registrata; una soglia con margine esplicito e un audit di robustezza a scala e risoluzione differenti restano non valutati.
 
 \subsection{Diagnostica del tracking su validation}
 
@@ -132,7 +168,7 @@ Nelle stesse 40 finestre il filtro interviene in 32 eventi (80\%); la mediana di
 
 \subsection{Costo computazionale}
 
-Il tempo totale mediano per traiettoria, calcolato come mediana delle cinque ripetizioni misurate per caso e successiva mediana sui 28 casi, è 0.117 s per Fixed FEM e 1.474 s per GDM. I controller MMPDE NumPy/Python richiedono tempi mediani maggiori: 6.728 s per arc-length, 9.603 s per Hessian e 12.356 s per Winslow. GDM risulta quindi più rapido delle implementazioni classiche utilizzate in questa campagna, ma circa 12.6 volte più lento della mesh fissa. Non è corretto interpretare questo risultato come superiorità algoritmica generale dei metodi neurali: i controller classici sono prototipi Python/NumPy, mentre GDM usa inferenza PyTorch; il costo di training offline non è incluso.
+Il tempo totale mediano per traiettoria, calcolato come mediana delle cinque ripetizioni misurate per caso e successiva mediana sui 28 casi, è 0.117 s per Fixed FEM e 1.474 s per GDM, pari a circa 12.6 volte il tempo della mesh fissa. I controller MMPDE NumPy/Python richiedono tempi mediani maggiori: 6.728 s per arc-length, 9.603 s per Hessian e 12.356 s per Winslow. Queste misure descrivono le implementazioni effettivamente confrontate, non la complessità algoritmica intrinseca: le baseline sono in NumPy/Python, mentre GDM usa inferenza PyTorch; il costo offline di training non è incluso. Non viene quindi rivendicata una superiorità computazionale di GDM rispetto ai metodi classici.
 
 \begin{table}[H]
 \centering\small
@@ -153,4 +189,4 @@ Winslow-type & 12.356 & $105.58\times$\\
 
 \subsection{Interpretazione F1}
 
-Nel protocollo registrato, GDM riduce l'errore relativo $L^2$ integrato rispetto alla mesh fissa e alle tre baseline classiche in tutti i 28 casi. La persistenza del segno nei due split è un'evidenza favorevole per la specifica famiglia MMS. La lettura deve tuttavia considerare tre limitazioni: (i) la finalizzazione automatica è stata interrotta da un controllo floating-point troppo stretto rispetto al filtro nativo; (ii) 26 eventi MMPDE hanno raggiunto il limite di 200 iterazioni, pur con energia monotona e senza fallimenti di line-search; (iii) la mesh GDM presenta qualità geometrica peggiore e un costo superiore alla mesh fissa. Di conseguenza, F1 fornisce una comparazione quantitativa promettente, ma non chiude ancora l'audit di convergenza delle baseline né la validazione completa della soglia di sicurezza.
+Nel protocollo registrato, GDM riduce l'errore relativo $L^2$ integrato rispetto alla mesh fissa e alle tre baseline classiche in tutti i 28 casi. La persistenza del segno nei due split è un'evidenza favorevole per la specifica famiglia MMS. L'endpoint è tuttavia l'errore della soluzione completamente discreta a $\Delta t=0.005$: la riduzione osservata non può essere attribuita esclusivamente alla componente spaziale, e la convergenza temporale E1 su mesh fissa non fornisce una stima dell'errore temporale specifico di F1. Inoltre, 26 eventi MMPDE hanno raggiunto il limite di 200 iterazioni e le baseline non sono quindi certificate come convergenti; i valori di intensità sono stati scelti su una griglia di quattro candidati. Infine, GDM raggiunge mesh più distorte e presenta un costo superiore alla mesh fissa. La comparazione va interpretata come confronto empirico a budget e parametri fissati, non come ranking a parità di convergenza o distorsione geometrica.
