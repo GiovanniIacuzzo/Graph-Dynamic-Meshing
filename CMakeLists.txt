@@ -59,6 +59,7 @@ set(GDM_CPP_TESTS
     test_mesh_metrics
     test_safety_filter
     test_fem_mms
+    test_transport_profiles
     test_fem_convergence
     test_ale_gcl
     test_ale_convergence

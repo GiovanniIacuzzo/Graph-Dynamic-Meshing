@@ -4,44 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gdm"
-version = "0.1.0"
-description = "Graph Dynamic Meshing (GDM): conservative ALE and neural r-adaptation"
+version = "0.3.0"
+description = "Controlled trajectory experiments for ALE finite element transport"
 requires-python = ">=3.10"
-dependencies = [
-    "numpy>=1.24",
-    "scipy>=1.10",
-    "matplotlib>=3.7",
-    "pyyaml>=6.0",
-    "tqdm>=4.65",
-    "torch>=2.0",
-    "torch-geometric>=2.3",
-]
+dependencies = ["numpy>=1.24", "scipy>=1.10", "PyYAML>=6"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "pybind11>=2.11",
-]
+learning = ["torch>=2.5"]
+figures = ["matplotlib>=3.7"]
+dev = ["pytest>=8.2", "pybind11>=2.11", "cmake>=3.20"]
+
+[project.scripts]
+gdm-transport = "gdm.transport.cli:main"
+gdm-campaign = "gdm.transport.campaign:main"
 
 [tool.setuptools]
-include-package-data = true
-py-modules = ["inference"]
-
-[tool.setuptools.package-dir]
-"" = "python"
+package-dir = {"" = "python"}
 
 [tool.setuptools.packages.find]
 where = ["python"]
-include = [
-    "oracle*",
-    "evaluation*",
-    "gdm*",
-    "dataset*",
-    "model*",
-    "utils*",
-    "plotting*",
-]
+include = ["gdm*"]
 
 [tool.setuptools.package-data]
 gdm = ["*.so", "*.pyd", "*.dylib"]

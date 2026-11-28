@@ -18,6 +18,12 @@ ManufacturedConvectionDiffusion2D::ManufacturedConvectionDiffusion2D(
 
 std::pair<double, double> ManufacturedConvectionDiffusion2D::get_center(
     double t) const noexcept {
+    if (params_.profile != PDEParameters::Profile::LegacyManufactured) {
+        const double frequency = 2.0 * kPi / params_.T;
+        const double turn = params_.profile == PDEParameters::Profile::Turning ? params_.turn : 0.0;
+        return {params_.center_x + t * params_.bx + turn * std::sin(frequency * t) / frequency,
+                params_.center_y + t * params_.by + turn * (1.0 - std::cos(frequency * t)) / frequency};
+    }
     const double tau = t / params_.T;
     return {0.3 + 0.4 * tau, 0.35 + 0.3 * tau};
 }
@@ -27,6 +33,25 @@ ExactPointEvaluation ManufacturedConvectionDiffusion2D::evaluate_exact(
     const auto [cx, cy] = get_center(t);
     const double rx = x - cx;
     const double ry = y - cy;
+    if (params_.profile != PDEParameters::Profile::LegacyManufactured) {
+        // Exact freely advecting heat kernel on R², restricted to the domain
+        // with its exact Dirichlet trace. Turning adds a manufactured source.
+        const double initial_variance = params_.sigma * params_.sigma;
+        const double variance = initial_variance + 2.0 * params_.nu * t;
+        const double phase = 2.0 * kPi * t / params_.T;
+        const double turn = params_.profile == PDEParameters::Profile::Turning ? params_.turn : 0.0;
+        ExactPointEvaluation out{};
+        out.u = (initial_variance / variance) *
+                std::exp(-0.5 * (rx * rx + ry * ry) / variance);
+        out.ux = -rx / variance * out.u;
+        out.uy = -ry / variance * out.u;
+        out.uxx = ((rx / variance) * (rx / variance) - 1.0 / variance) * out.u;
+        out.uyy = ((ry / variance) * (ry / variance) - 1.0 / variance) * out.u;
+        out.f = -turn * (std::cos(phase) * out.ux + std::sin(phase) * out.uy);
+        out.ut = params_.nu * (out.uxx + out.uyy) - params_.bx * out.ux -
+                 params_.by * out.uy + out.f;
+        return out;
+    }
     const double inv_sigma2 = 1.0 / (params_.sigma * params_.sigma);
 
     const double gaussian = std::exp(-0.5 * (rx * rx + ry * ry) * inv_sigma2);

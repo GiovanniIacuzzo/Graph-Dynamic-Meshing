@@ -35,10 +35,16 @@ struct PDEParameters {
     double sigma{0.06};
     double beta{0.5};
     double T{0.5};
+    enum class Profile { LegacyManufactured, Transport, Turning };
+    Profile profile{Profile::LegacyManufactured};
+    double center_x{0.3};
+    double center_y{0.35};
+    double turn{0.0};
 
     void validate() const {
         if (!std::isfinite(bx) || !std::isfinite(by) || !std::isfinite(nu) ||
-            !std::isfinite(sigma) || !std::isfinite(beta) || !std::isfinite(T)) {
+            !std::isfinite(sigma) || !std::isfinite(beta) || !std::isfinite(T) ||
+            !std::isfinite(center_x) || !std::isfinite(center_y) || !std::isfinite(turn)) {
             throw std::invalid_argument("PDEParameters: rilevato parametro non finito.");
         }
         if (nu < 0.0) {

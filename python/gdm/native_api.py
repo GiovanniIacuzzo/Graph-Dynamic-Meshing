@@ -128,6 +128,11 @@ def create_pde_model(
     sigma: float = 0.06,
     beta: float = 0.5,
     T: float = 0.5,
+    *,
+    profile: str = "legacy",
+    center_x: float = 0.3,
+    center_y: float = 0.35,
+    turn: float = 0.0,
 ) -> "_gdm_core.ManufacturedConvectionDiffusion2D":
     params = _gdm_core.PDEParameters()
     params.bx = float(bx)
@@ -136,6 +141,13 @@ def create_pde_model(
     params.sigma = float(sigma)
     params.beta = float(beta)
     params.T = float(T)
+    profiles = {"legacy": "LegacyManufactured", "transport": "Transport", "turning": "Turning"}
+    if profile not in profiles:
+        raise ValueError(f"Unknown transport profile: {profile}")
+    params.profile = getattr(_gdm_core.TransportProfile, profiles[profile])
+    params.center_x = float(center_x)
+    params.center_y = float(center_y)
+    params.turn = float(turn)
     params.validate()
     return _gdm_core.ManufacturedConvectionDiffusion2D(params)
 
@@ -193,7 +205,9 @@ def create_ale_solver(
     solver_params = create_linear_solver_parameters(linear_solver_config)
     stabilization_params = create_stabilization_parameters(stabilization_mode, stabilization_config)
     return _gdm_core.ALESolver2D(
-        pde, float(nu), float(bx), float(by), solver_params, stabilization_params
+        pde, float(pde.nu if pde is not None else nu),
+        float(pde.bx if pde is not None else bx), float(pde.by if pde is not None else by),
+        solver_params, stabilization_params
     )
 
 

@@ -1,27 +1,14 @@
 name: gdm_env
 channels:
-  - pytorch
-  - pyg
   - conda-forge
-  - defaults
 dependencies:
-  - python=3.10
+  - python=3.11
   - pip
-  - setuptools>=64
+  - setuptools
   - wheel
-  # Core scientific stack
-  - numpy>=1.24
-  - scipy>=1.10
-  - matplotlib>=3.7
-  - pyyaml>=6.0
-  - tqdm>=4.65
-  # PyTorch & PyTorch Geometric (risolti dai canali dedicati pytorch / pyg)
-  - pytorch>=2.0
-  - pyg>=2.3
-  # Build tools & C++ bindings (risolti da conda-forge)
-  - pybind11>=2.11
+  - numpy
+  - scipy
+  - pyyaml
+  - pytest>=8.2
   - cmake>=3.20
-  - ninja>=1.11
-  # Testing
-  - pytest>=7.0
-  - pytest-cov>=4.0
+  - pybind11>=2.11

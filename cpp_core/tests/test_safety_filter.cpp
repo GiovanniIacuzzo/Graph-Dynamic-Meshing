@@ -115,6 +115,14 @@ int main() {
     GDM_CHECK(res_near_floor.alpha_global == 0.0);
     GDM_CHECK(res_near_floor.min_jacobian_after >= buffered.epsilon);
 
+    const std::vector<MeshState::Coord2D> restoring_disp = {
+        {0.0, 0.0}, {0.0, 0.0}, {0.0, 1.0e-3}
+    };
+    const auto restored = apply_safety_filter(
+        near_floor_nodes, buffer_cells, restoring_disp, {0, 1}, buffered);
+    GDM_CHECK(restored.alpha_global == 1.0);
+    GDM_CHECK(restored.min_jacobian_after > buffered.epsilon + 1.0e-6);
+
     // An initially inadmissible mesh is rejected strictly, including a
     // sub-tolerance violation; the filter never treats it as a valid starting point.
     const std::vector<MeshState::Coord2D> below_floor_nodes = {
@@ -129,6 +137,26 @@ int main() {
         rejected_below_floor = true;
     }
     GDM_CHECK(rejected_below_floor);
+
+    // Both endpoints are above epsilon, but the path dips below epsilon.
+    // This also exercises coefficients close to the legacy root tolerance.
+    const double floor = locked.epsilon;
+    const double x = (floor + 1.3e-13) / 0.01 + 0.01;
+    const double dx = -1.05e-6;
+    const double dy = (-9.9e-13 + 0.01 * (1.0e-6 + dx)) / x;
+    const std::vector<MeshState::Coord2D> path_nodes = {
+        {0, 0}, {1, 0}, {1, 1}, {0, 1}, {x, 0.01}, {0.01, 0.01}
+    };
+    const std::vector<MeshState::CellConn> path_cells = {
+        {2, 4, 1}, {1, 4, 0}, {3, 4, 2}, {5, 3, 0}, {4, 5, 0}, {5, 4, 3}
+    };
+    const std::vector<MeshState::Coord2D> path_displacement = {
+        {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 1.0e-6}, {dx, dy}
+    };
+    const auto path = apply_safety_filter(path_nodes, path_cells, path_displacement, {0, 1, 2, 3}, locked);
+    GDM_CHECK(path.filter_activated);
+    GDM_CHECK(path.alpha_global > 0.0 && path.alpha_global < 0.47);
+    GDM_CHECK(path.min_jacobian_after >= floor);
 
     return 0;
 }

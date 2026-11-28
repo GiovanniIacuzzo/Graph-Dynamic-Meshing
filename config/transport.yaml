@@ -1,0 +1,36 @@
+seed: 1701
+time:
+  duration: 0.4
+  horizon: 0.1
+  steps: [0.01, 0.005]
+resolutions: [16, 24]
+cases:
+  train: {transport: 24, turning: 12}
+  validation: {transport: 6, turning: 4}
+  test: {transport: 8, turning: 8}
+motion:
+  jacobian_ratio: 0.12
+  max_speed: 1.0
+  strength: 0.60
+solver:
+  stabilization: supg
+  linear:
+    right_preconditioning: true
+    ale_rhs_norm_floor: 0.0
+learning:
+  epochs: 60
+  seeds: [4983, 4984, 4985]
+  latent_dim: 32
+  message_passing_steps: 3
+  learning_rate: 0.001
+  batch_size: 8
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  ranking_weight: 0.2
+  tie_tolerance: 0.0001
+  deterministic: true
+  threads: 1
+campaigns:
+  timing_repeats: 5
+  figure_resolution: 24
+  figure_dt: 0.005

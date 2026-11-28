@@ -1,1 +1,0 @@
-"""GDM research campaign modules."""

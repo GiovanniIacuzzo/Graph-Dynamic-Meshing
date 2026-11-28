@@ -1,6 +1,8 @@
 __pycache__/
 .pytest_cache/
 build-check-971/
+build-gdm-py310/
+gdm.egg-info/
 build/
 backup/
 data/
@@ -10,4 +12,5 @@ compiler/
 CMakeLists.txt.before_dealii_compat.bak
 idea.md
 .DS_Store
+*.so
 _gdm_core.cpython-310-darwin.so

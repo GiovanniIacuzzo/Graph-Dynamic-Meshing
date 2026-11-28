@@ -141,6 +141,11 @@ PYBIND11_MODULE(_gdm_core, m) {
         .def_readwrite("ny", &DomainParameters::ny)
         .def("validate", &DomainParameters::validate);
 
+    py::enum_<PDEParameters::Profile>(m, "TransportProfile")
+        .value("LegacyManufactured", PDEParameters::Profile::LegacyManufactured)
+        .value("Transport", PDEParameters::Profile::Transport)
+        .value("Turning", PDEParameters::Profile::Turning);
+
     py::class_<PDEParameters>(m, "PDEParameters")
         .def(py::init<>())
         .def_readwrite("nu", &PDEParameters::nu)
@@ -149,6 +154,10 @@ PYBIND11_MODULE(_gdm_core, m) {
         .def_readwrite("sigma", &PDEParameters::sigma)
         .def_readwrite("beta", &PDEParameters::beta)
         .def_readwrite("T", &PDEParameters::T)
+        .def_readwrite("profile", &PDEParameters::profile)
+        .def_readwrite("center_x", &PDEParameters::center_x)
+        .def_readwrite("center_y", &PDEParameters::center_y)
+        .def_readwrite("turn", &PDEParameters::turn)
         .def("validate", &PDEParameters::validate);
 
     py::class_<SafetyParameters>(m, "SafetyParameters")

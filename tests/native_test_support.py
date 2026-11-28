@@ -8,7 +8,7 @@ import pytest
 # a compiled deal.II build skips only native integration tests, not the full suite.
 pytest.importorskip("gdm._gdm_core", reason="Build the C++/deal.II extension to run native integration tests", exc_type=ImportError)
 
-from gdm import (  # noqa: E402
+from gdm.native_api import (  # noqa: E402
     NativeMeshAdapter,
     create_pde_model,
     create_fem_solver,
@@ -20,7 +20,6 @@ from gdm import (  # noqa: E402
     apply_native_safety_filter,
     remap_p1_native,
     remap_l2_native,
-    NativeDynamicRuntime,
 )
 
 

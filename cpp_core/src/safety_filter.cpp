@@ -62,9 +62,8 @@ double minimum_buffered_slack(const std::vector<Coord>& safe_nodes,
         const auto i2 = static_cast<std::size_t>(cells[e][2]);
         const double jacobian = triangle_jacobian(
             safe_nodes[i0], safe_nodes[i1], safe_nodes[i2]);
-        // If the initial cell does not have enough room for the numerical
-        // buffer, its admissible floor is its initial determinant; that cell
-        // consequently forces alpha=0 in the path calculation.
+        // Near the floor, preserve at least the initial determinant. A
+        // motion that increases it may restore the full numerical buffer.
         const double required_floor = std::min(
             initial_jacobians[e], epsilon + cell_buffers[e]);
         min_slack = std::min(min_slack, jacobian - required_floor);
@@ -119,7 +118,6 @@ SafetyFilterResult apply_safety_filter(
     }
 
     const double eps = params.epsilon;
-    const double tol_deg = params.tol_deg;
     const double machine_guard = 64.0 * std::numeric_limits<double>::epsilon();
     const double relative_guard = std::max(params.relative_jacobian_margin, machine_guard);
     std::vector<double> A(n_cells, 0.0), B(n_cells, 0.0), C(n_cells, 0.0),
@@ -162,7 +160,7 @@ SafetyFilterResult apply_safety_filter(
         const double local_scale = std::max(std::abs(C[e]), std::abs(eps));
         delta_e[e] = relative_guard * local_scale;
         const double buffered_floor = eps + delta_e[e];
-        C_buffered[e] = C[e] - buffered_floor;
+        C_buffered[e] = C[e] - std::min(C[e], buffered_floor);
         min_c = std::min(min_c, C[e]);
     }
 
@@ -190,59 +188,44 @@ SafetyFilterResult apply_safety_filter(
         return result;
     }
 
-    // Enforce J_e(alpha) >= epsilon + delta_e, where delta_e is a
-    // scale-aware numerical buffer. If the initial cell has no room for the
-    // buffer, freeze the global path at alpha=0 rather than weakening epsilon.
-    for (std::size_t e = 0; e < n_cells; ++e) {
-        const double a = A[e];
-        const double b = B[e];
-        const double c = C_buffered[e];
-        double alpha = 1.0;
-        if (c <= 0.0) {
-            alpha = 0.0;
-        } else if (std::abs(a) < tol_deg) {
-            if (b < 0.0 && c + b <= 0.0) {
-                alpha = std::clamp(-c / b, 0.0, 1.0);
-            }
-        } else {
-            const double delta = b * b - 4.0 * a * c;
-            if (!std::isfinite(delta)) {
-                throw std::invalid_argument(
-                    "apply_safety_filter: overflow numerico nel discriminante del determinante.");
-            }
-            const double scale_delta = (b * b + std::abs(4.0 * a * c) + 1.0) * tol_deg;
-            if (!std::isfinite(scale_delta)) {
-                throw std::invalid_argument(
-                    "apply_safety_filter: overflow numerico nella tolleranza del discriminante.");
-            }
-            if (delta < 0.0 && delta >= -scale_delta && a > 0.0 && b < 0.0) {
-                const double vertex = -b / (2.0 * a);
-                if (vertex > 0.0 && vertex <= 1.0) {
-                    alpha = vertex;
-                }
-            } else if (delta >= 0.0) {
-                const double sqrt_delta = std::sqrt(std::max(0.0, delta));
-                const double sign_b = (b >= 0.0) ? 1.0 : -1.0;
-                double q = -0.5 * (b + sign_b * sqrt_delta);
-                if (std::abs(b) < tol_deg) {
-                    q = -0.5 * sqrt_delta;
-                }
-                double r1 = 2.0;
-                double r2 = 2.0;
-                if (std::abs(q) > 0.0) {
-                    r1 = q / a;
-                    r2 = c / q;
-                }
-                const double r1_valid = (r1 > 0.0 && r1 <= 1.0) ? r1 : 2.0;
-                const double r2_valid = (r2 > 0.0 && r2 <= 1.0) ? r2 : 2.0;
-                const double first = std::min(r1_valid, r2_valid);
-                if (first <= 1.0) {
-                    alpha = first;
-                }
-            }
+    // The minimum over a prefix is monotone, even when both endpoints
+    // are admissible and the quadratic dips below the floor in between.
+    const auto admissible_prefix = [&](std::size_t e, double alpha) {
+        const long double a = A[e];
+        const long double b = B[e];
+        const long double c = C_buffered[e];
+        const auto value = [&](long double t) {
+            return std::fma(std::fma(a, t, b), t, c);
+        };
+        if (value(alpha) < 0.0L) {
+            return false;
         }
-        alpha_e[e] = alpha;
-        if (alpha < alpha_e[result.limiting_cell_index] || e == 0) {
+        if (a > 0.0L && b < 0.0L) {
+            const long double vertex = -b / (2.0L * a);
+            return vertex >= alpha || value(vertex) >= 0.0L;
+        }
+        return true;
+    };
+    for (std::size_t e = 0; e < n_cells; ++e) {
+        if (C_buffered[e] == 0.0 && (B[e] < 0.0 || (B[e] == 0.0 && A[e] < 0.0))) {
+            alpha_e[e] = 0.0;
+        } else if (!admissible_prefix(e, 1.0)) {
+            double low = 0.0;
+            double high = 1.0;
+            for (int iteration = 0; iteration < 64; ++iteration) {
+                const double trial = 0.5 * (low + high);
+                if (trial == low || trial == high) {
+                    break;
+                }
+                if (admissible_prefix(e, trial)) {
+                    low = trial;
+                } else {
+                    high = trial;
+                }
+            }
+            alpha_e[e] = low;
+        }
+        if (alpha_e[e] < alpha_e[result.limiting_cell_index]) {
             result.limiting_cell_index = e;
         }
     }
